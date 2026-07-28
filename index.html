@@ -1729,7 +1729,14 @@
       // Disable Cesium Ion default token to prevent 401 errors when no token is provided.
       // The sim uses ArcGIS imagery and ellipsoid terrain, so no Ion access is needed.
       Cesium.Ion.defaultAccessToken = '';
+      setLoading(25, 'Loading satellite imagery...');
       viewer = new Cesium.Viewer('cesiumContainer', {
+        // Provide non-Ion imagery and terrain directly so the Viewer never requests Ion defaults.
+        imageryProvider: new Cesium.UrlTemplateImageryProvider({
+          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          maximumLevel: 18, credit: 'Esri'
+        }),
+        terrainProvider: new Cesium.EllipsoidTerrainProvider(),
         baseLayer: false,
         sceneModePicker: false, baseLayerPicker: false,
         geocoder: false, homeButton: false,
@@ -1739,21 +1746,11 @@
         fullscreenButton: false, vrButton: false,
       });
 
-      setLoading(25, 'Loading satellite imagery...');
-      viewer.imageryLayers.removeAll();
-      viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        maximumLevel: 18, credit: 'Esri'
-      }));
-
       setLoading(35, 'Setting up atmosphere...');
       viewer.scene.skyAtmosphere.show = true;
       viewer.scene.fog.enabled = true;
       viewer.scene.fog.density = 0.0002;
       viewer.scene.globe.enableLighting = true;
-      // Terrain: default to the token-free ellipsoid. World Terrain can be enabled
-      // later by pasting a valid Cesium Ion access token and clicking the button.
-      viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
 
       setLoading(50, 'Loading JSBSim WASM...');
       sdk = await JSBSimSdk.create({
