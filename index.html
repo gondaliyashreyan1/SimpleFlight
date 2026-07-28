@@ -208,6 +208,12 @@
         <option value="low">Low</option>
       </select>
     </div>
+    <div class="row">
+      <label>Cesium Ion Token</label>
+      <input id="ionToken" type="text" placeholder="Paste token for World Terrain" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--panel-border); background:rgba(255,255,255,0.05); color:var(--text); font-size:0.85rem;">
+      <button id="applyIonToken" style="margin-top:6px; padding:6px 12px; border-radius:6px; border:none; background:var(--accent); color:#02111f; cursor:pointer; font-weight:600; font-size:0.85rem;">Enable World Terrain</button>
+      <div class="hint">Leave blank to use ellipsoid terrain (no token required).</div>
+    </div>
   </div>
 
   <div id="autopilotPanel">
@@ -1454,6 +1460,18 @@
         }
       });
 
+      document.getElementById('applyIonToken').addEventListener('click', () => {
+        const token = document.getElementById('ionToken').value.trim();
+        if (!token) {
+          console.log('[Cesium] No token provided; using ellipsoid terrain.');
+          if (viewer && viewer.scene) {
+            viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+          }
+          return;
+        }
+        enableWorldTerrain(token);
+      });
+
       // Autopilot toggles
       document.getElementById('apMaster').addEventListener('click', () => toggleAp('master'));
       document.getElementById('apAltBtn').addEventListener('click', () => toggleAp('alt'));
@@ -1742,14 +1760,29 @@
       viewer.scene.fog.enabled = true;
       viewer.scene.fog.density = 0.0002;
       viewer.scene.globe.enableLighting = true;
-      // Terrain (uses default Ion token; may show watermark if not set)
-      try {
-        if (Cesium.Terrain && Cesium.Terrain.fromWorldTerrain) {
-          viewer.scene.terrainProvider = await Cesium.Terrain.fromWorldTerrain();
-        } else if (typeof Cesium.createWorldTerrain === 'function') {
-          viewer.scene.terrainProvider = Cesium.createWorldTerrain();
+      // Terrain: default to the token-free ellipsoid. World Terrain can be enabled
+      // later by pasting a valid Cesium Ion access token and clicking the button.
+      viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+
+      async function enableWorldTerrain(token) {
+        try {
+          Cesium.Ion.defaultAccessToken = token;
+          if (Cesium.Terrain && Cesium.Terrain.fromWorldTerrain) {
+            const provider = await Cesium.Terrain.fromWorldTerrain();
+            if (viewer && viewer.scene) {
+              viewer.scene.terrainProvider = provider;
+              console.log('[Cesium] World terrain enabled.');
+            }
+          } else if (typeof Cesium.createWorldTerrain === 'function') {
+            viewer.scene.terrainProvider = Cesium.createWorldTerrain();
+          }
+        } catch (e) {
+          console.warn('[Cesium] World terrain unavailable, using ellipsoid.', e);
+          if (viewer && viewer.scene) {
+            viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+          }
         }
-      } catch (e) { console.warn('[Cesium] World terrain unavailable, using ellipsoid.', e); }
+      }
 
       setLoading(50, 'Loading JSBSim WASM...');
       sdk = await JSBSimSdk.create({
@@ -1777,21 +1810,37 @@
       sdk.runIc();
 
       setLoading(85, 'Loading 3D model...');
-      // NOTE: The prompt requires a Boeing 737-800 GLB. No reliable, freely-hostable 737 GLB URL exists,
-      // so a generated 737-like placeholder is used. Replace the line below with a runtime URL such as:
-      // const modelUri = 'https://example.com/737.glb';
-      try {
-        const modelUri = generateAircraftGltfUri();
-        modelEntity = viewer.entities.add({
+      // Load the real Boeing 737-800 GLB from a public GitHub repository.
+      // If it fails to load, fall back to the generated 737-like placeholder.
+      const real737Uri = 'https://raw.githubusercontent.com/yc4330/boeing737/main/b737-800_model.glb';
+      const fallbackUri = generateAircraftGltfUri();
+
+      function createAircraftModel(uri) {
+        return viewer.entities.add({
           position: Cesium.Cartesian3.fromDegrees(-80.2870, 25.7959, 1500 * mPerFt),
           model: {
-            uri: modelUri,
+            uri: uri,
             minimumPixelSize: 64,
             maximumScale: 20000,
             scale: 1.0
           }
         });
-      } catch (e) { console.error('[Model] Failed to load aircraft model', e); }
+      }
+
+      if (window.location.protocol === 'file:') {
+        // file:// cannot fetch cross-origin GLB; use local placeholder.
+        modelEntity = createAircraftModel(fallbackUri);
+      } else {
+        // Pre-check the real model; browser cache makes the entity's later load fast.
+        Cesium.Model.fromGltfAsync({ url: real737Uri })
+          .then(() => {
+            modelEntity = createAircraftModel(real737Uri);
+          })
+          .catch((err) => {
+            console.warn('[Model] Real 737 failed to load; falling back to placeholder', err);
+            modelEntity = createAircraftModel(fallbackUri);
+          });
+      }
 
       setLoading(90, 'Setting up HUD...');
       setupControls();
