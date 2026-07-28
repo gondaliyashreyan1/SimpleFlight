@@ -1460,18 +1460,6 @@
         }
       });
 
-      document.getElementById('applyIonToken').addEventListener('click', () => {
-        const token = document.getElementById('ionToken').value.trim();
-        if (!token) {
-          console.log('[Cesium] No token provided; using ellipsoid terrain.');
-          if (viewer && viewer.scene) {
-            viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-          }
-          return;
-        }
-        enableWorldTerrain(token);
-      });
-
       // Autopilot toggles
       document.getElementById('apMaster').addEventListener('click', () => toggleAp('master'));
       document.getElementById('apAltBtn').addEventListener('click', () => toggleAp('alt'));
@@ -1760,29 +1748,14 @@
       viewer.scene.fog.enabled = true;
       viewer.scene.fog.density = 0.0002;
       viewer.scene.globe.enableLighting = true;
-      // Terrain: default to the token-free ellipsoid. World Terrain can be enabled
-      // later by pasting a valid Cesium Ion access token and clicking the button.
-      viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-
-      async function enableWorldTerrain(token) {
-        try {
-          Cesium.Ion.defaultAccessToken = token;
-          if (Cesium.Terrain && Cesium.Terrain.fromWorldTerrain) {
-            const provider = await Cesium.Terrain.fromWorldTerrain();
-            if (viewer && viewer.scene) {
-              viewer.scene.terrainProvider = provider;
-              console.log('[Cesium] World terrain enabled.');
-            }
-          } else if (typeof Cesium.createWorldTerrain === 'function') {
-            viewer.scene.terrainProvider = Cesium.createWorldTerrain();
-          }
-        } catch (e) {
-          console.warn('[Cesium] World terrain unavailable, using ellipsoid.', e);
-          if (viewer && viewer.scene) {
-            viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-          }
+      // Terrain (uses default Ion token; may show watermark if not set)
+      try {
+        if (Cesium.Terrain && Cesium.Terrain.fromWorldTerrain) {
+          viewer.scene.terrainProvider = await Cesium.Terrain.fromWorldTerrain();
+        } else if (typeof Cesium.createWorldTerrain === 'function') {
+          viewer.scene.terrainProvider = Cesium.createWorldTerrain();
         }
-      }
+      } catch (e) { console.warn('[Cesium] World terrain unavailable, using ellipsoid.', e); }
 
       setLoading(50, 'Loading JSBSim WASM...');
       sdk = await JSBSimSdk.create({
@@ -1831,15 +1804,24 @@
         // file:// cannot fetch cross-origin GLB; use local placeholder.
         modelEntity = createAircraftModel(fallbackUri);
       } else {
-        // Pre-check the real model; browser cache makes the entity's later load fast.
-        Cesium.Model.fromGltfAsync({ url: real737Uri })
-          .then(() => {
+        // Try to pre-load the real model to verify it exists. Use the legacy API if
+        // fromGltfAsync is not available in this Cesium build.
+        const loadRealModel = async () => {
+          try {
+            if (Cesium.Model && typeof Cesium.Model.fromGltfAsync === 'function') {
+              await Cesium.Model.fromGltfAsync({ url: real737Uri });
+            } else if (Cesium.Model && typeof Cesium.Model.fromGltf === 'function') {
+              Cesium.Model.fromGltf({ url: real737Uri });
+            } else {
+              throw new Error('Cesium.Model.fromGltf/fromGltfAsync not available');
+            }
             modelEntity = createAircraftModel(real737Uri);
-          })
-          .catch((err) => {
+          } catch (err) {
             console.warn('[Model] Real 737 failed to load; falling back to placeholder', err);
             modelEntity = createAircraftModel(fallbackUri);
-          });
+          }
+        };
+        loadRealModel();
       }
 
       setLoading(90, 'Setting up HUD...');
@@ -1950,7 +1932,9 @@
 
     init().catch(err => {
       console.error('[Init] Failed:', err);
-      elLoadingStatus.textContent = 'Initialization failed. See console.';
+      if (err && err.stack) console.error(err.stack);
+      elLoadingStatus.textContent = 'Initialization failed: ' + (err && err.message ? err.message : String(err));
+      elLoadingStatus.style.color = '#ff5c5c';
     });
   </script>
 </body>
