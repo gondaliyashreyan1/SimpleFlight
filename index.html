@@ -1726,6 +1726,9 @@
     // ---- Init ----
     async function init() {
       setLoading(10, 'Initializing CesiumJS...');
+      // Disable Cesium Ion default token to prevent 401 errors when no token is provided.
+      // The sim uses ArcGIS imagery and ellipsoid terrain, so no Ion access is needed.
+      Cesium.Ion.defaultAccessToken = '';
       viewer = new Cesium.Viewer('cesiumContainer', {
         baseLayer: false,
         sceneModePicker: false, baseLayerPicker: false,
