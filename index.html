@@ -57,7 +57,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Se
 <div id="menuPanel">
 <h3>Aircraft</h3>
 <label>Select Aircraft</label>
-<select id="aircraftSelect"><option value="c172">Cessna 172 (JSBSim)</option></select>
+<select id="aircraftSelect"><option value="c172">Boeing 737-800 (JSBSim)</option></select>
 <label>Camera</label>
 <select id="viewSelect"><option value="chase">Chase Camera</option><option value="tower">Tower View</option></select>
 <h3>Controls</h3>
@@ -159,7 +159,7 @@ function setupControls() {
   window.addEventListener('gamepaddisconnected', () => { controls.gpIdx = -1; });
 }
 
-function updateControls() {
+function updateControls(dt) {
   let el=0, al=0, ru=0;
   if (controls.keys.KeyW||controls.keys.ArrowUp) el -= 0.8;
   if (controls.keys.KeyS||controls.keys.ArrowDown) el += 0.8;
@@ -167,8 +167,9 @@ function updateControls() {
   if (controls.keys.KeyD||controls.keys.ArrowRight) al += 0.8;
   if (controls.keys.KeyQ) ru -= 0.8;
   if (controls.keys.KeyE) ru += 0.8;
-  if (controls.keys.ShiftLeft||controls.keys.ShiftRight) controls.thrIn = Math.min(1, controls.thrIn+0.5*0.016);
-  if (controls.keys.ControlLeft||controls.keys.ControlRight) controls.thrIn = Math.max(0, controls.thrIn-0.5*0.016);
+  const thrRate = dt || 0.016;
+  if (controls.keys.ShiftLeft||controls.keys.ShiftRight) controls.thrIn = Math.min(1, controls.thrIn+0.5*thrRate);
+  if (controls.keys.ControlLeft||controls.keys.ControlRight) controls.thrIn = Math.max(0, controls.thrIn-0.5*thrRate);
   for (let i=0;i<=9;i++) if (controls.keys['Digit'+i]) controls.thrIn = i/9;
   if (document.pointerLockElement) { el = controls.my*1.5; al = controls.mx*1.5; }
   if (controls.gpIdx >= 0) {
@@ -184,32 +185,38 @@ function updateControls() {
   }
   // Write controls to JSBSim
   if (sdk) {
-    sdk.setPropertyValue("fcs/elevator-cmd-norm", clamp(el,-1,1));
-    sdk.setPropertyValue("fcs/aileron-cmd-norm", clamp(al,-1,1));
-    sdk.setPropertyValue("fcs/rudder-cmd-norm", clamp(ru,-1,1));
-    sdk.setPropertyValue("fcs/throttle-cmd-norm", clamp(controls.thrIn,0,1));
-    sdk.setPropertyValue("fcs/flap-cmd-norm", controls.flapIn);
-    sdk.setPropertyValue("gear/gear-cmd-norm", controls.gearIn);
+    try {
+      sdk.setPropertyValue("fcs/elevator-cmd-norm", clamp(el,-1,1));
+      sdk.setPropertyValue("fcs/aileron-cmd-norm", clamp(al,-1,1));
+      sdk.setPropertyValue("fcs/rudder-cmd-norm", clamp(ru,-1,1));
+      sdk.setPropertyValue("fcs/throttle-cmd-norm", clamp(controls.thrIn,0,1));
+      sdk.setPropertyValue("fcs/flap-cmd-norm", controls.flapIn);
+      sdk.setPropertyValue("gear/gear-cmd-norm", controls.gearIn);
+    } catch(e) {
+      console.warn('[Controls] setPropertyValue failed:', e.message);
+    }
   }
 }
 
 // ---- HUD ----
 function drawHUD() {
-  if (!hudCtx || !sdk) return;
+  if (!hudCtx) return;
   const c = hudCtx, w = c.canvas.width, h = c.canvas.height;
   const sc = Math.min(w/1200, h/800);
   c.clearRect(0,0,w,h);
-  const alt = sdk.getPropertyValue("position/h-sl-ft");
-  const ias = sdk.getPropertyValue("velocities/vc-kts");
-  const gs = sdk.getPropertyValue("velocities/vg-kts");
-  const hdg = sdk.getPropertyValue("attitude/psi-deg");
-  const pitch = sdk.getPropertyValue("attitude/theta-deg");
-  const roll = sdk.getPropertyValue("attitude/phi-deg");
-  const vs = sdk.getPropertyValue("velocities/fps-fps") * 60 * ftPerM;
-  const thr = sdk.getPropertyValue("fcs/throttle-cmd-norm");
-  const aoa = sdk.getPropertyValue("aero/alpha-deg");
-  const mach = sdk.getPropertyValue("velocities/mach");
-  const onGnd = sdk.getPropertyValue("gear/unit[0]/WOW");
+  const sv = (v,d) => (Number.isFinite(v) ? v : d);
+  const g = (p,d) => sdk ? sv(sdk.getPropertyValue(p),d) : d;
+  const alt = g("position/h-sl-ft",0);
+  const ias = g("velocities/vc-kts",0);
+  const gs = g("velocities/vg-kts",0);
+  const hdg = g("attitude/psi-deg",90);
+  const pitch = g("attitude/theta-deg",0);
+  const roll = g("attitude/phi-deg",0);
+  const vs = g("velocities/fps-fps",0) * 60 * ftPerM;
+  const thr = g("fcs/throttle-cmd-norm",controls.thrIn);
+  const aoa = g("aero/alpha-deg",0);
+  const mach = g("velocities/mach",0);
+  const onGnd = g("gear/unit[0]/WOW",1);
 
   const cx = w/2, bottomY = h - 180*sc;
 
@@ -368,50 +375,89 @@ async function init() {
     try { viewer.scene.fog.enabled = true; viewer.scene.fog.density = 0.0002; } catch(e) {}
     try { viewer.scene.globe.enableLighting = true; } catch(e) {}
 
+    // Set initial camera close to Miami airport BEFORE JSBSim loads
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(-80.307, 25.795, 100),
+      orientation: { heading: Math.PI/2, pitch: -0.3, roll: 0 }
+    });
+    console.log('[Init] Camera set to Miami airport close-up view');
+
     set('Loading JSBSim WASM...', 50);
     try {
       sdk = await JSBSimSdk.create({
         moduleUrl: wasmModuleUrl,
         wasmUrl: wasmBinaryUrl,
-        log: { console: false }
+        log: { console: true, stripAnsi: true }
       });
-      console.log('JSBSim WASM loaded!');
+      console.log('[JSBSim] WASM loaded!');
+
+      // EXPLICITLY configure paths (matching SDK demo pattern)
+      sdk.configurePaths({
+        rootDir: '/runtime',
+        aircraftPath: 'aircraft',
+        enginePath: 'engine',
+        systemsPath: 'systems'
+      });
+      console.log('[JSBSim] Paths configured');
 
       set('Writing aircraft configs...', 65);
       sdk.writeDataFile('aircraft/c172p/c172p.xml', C172_AIRCRAFT_XML);
       sdk.writeDataFile('engine/eng_io320.xml', JSBSIM_CONFIGS.eng_io320);
       sdk.writeDataFile('engine/prop_75in2f.xml', JSBSIM_CONFIGS.prop_75in2f);
-
-      // Write a flight script (REQUIRED by JSBSim before runIc)
-      sdk.writeDataFile('scripts/flight.xml', `
-        <runscript name="SimpleFlight">
-          <use aircraft="c172p"/>
-          <run start="0.0" end="3600" dt="0.008333">
-            <event name="Start engine">
-              <condition>simulation/sim-time-sec ge 0.5</condition>
-              <set name="fcs/throttle-cmd-norm" value="0.75"/>
-              <set name="fcs/mixture-cmd-norm" value="1.0"/>
-              <set name="propulsion/magneto_cmd" value="3"/>
-              <set name="propulsion/starter_cmd" value="1"/>
-            </event>
-          </run>
-        </runscript>
-      `);
+      console.log('[JSBSim] Configs written');
 
       set('Loading aircraft model...', 75);
-      // SDK README pattern: loadModel -> loadScript -> runIc
-      sdk.loadModel('c172p');
-      sdk.loadScript('scripts/flight.xml');
-      // Set initial conditions via API (before runIc)
-      sdk.setPropertyValue('ic/h-sl-ft', 0);
-      sdk.setPropertyValue('ic/u-fps', 0);
-      sdk.setPropertyValue('ic/lat-geod-deg', 25.7959);
-      sdk.setPropertyValue('ic/long-gc-deg', -80.2870);
-      sdk.setPropertyValue('ic/psi-true-deg', 90);
-      sdk.runIc();
-      console.log('[JSBSim] Init complete. SDK ready.');
+      const modelOk = sdk.loadModel('c172p');
+      console.log('[JSBSim] loadModel result:', modelOk);
+
+      // Write reset00.xml init file (official JSBSim format from repo)
+      sdk.writeDataFile('aircraft/c172p/reset00.xml', [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<initialize name="reset00">',
+        '  <ubody unit="FT/SEC"> 0.0 </ubody>',
+        '  <vbody unit="FT/SEC"> 0.0 </vbody>',
+        '  <wbody unit="FT/SEC"> 0.0 </wbody>',
+        '  <latitude unit="DEG"> 25.7959 </latitude>',
+        '  <longitude unit="DEG"> -80.2870 </longitude>',
+        '  <phi unit="DEG"> 0.0 </phi>',
+        '  <theta unit="DEG"> 0.0 </theta>',
+        '  <psi unit="DEG"> 90.0 </psi>',
+        '  <altitude unit="FT"> 0.0 </altitude>',
+        '</initialize>'
+      ].join('\n'));
+      console.log('[JSBSim] reset00.xml written');
+
+      // Write script (official JSBSim format from repo)
+      sdk.writeDataFile('scripts/flight.xml', [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<runscript name="SimpleFlight">',
+        '  <use aircraft="c172p" initialize="reset00"/>',
+        '  <run start="0.0" end="3600" dt="0.008333">',
+        '    <event name="Start engine">',
+        '      <condition>simulation/sim-time-sec ge 0.5</condition>',
+        '      <set name="fcs/throttle-cmd-norm" action="FG_RAMP" value="0.75" tc="0.5"/>',
+        '      <set name="fcs/mixture-cmd-norm" value="1.0"/>',
+        '      <set name="propulsion/magneto_cmd" value="3"/>',
+        '      <set name="propulsion/starter_cmd" value="1"/>',
+        '    </event>',
+        '  </run>',
+        '</runscript>'
+      ].join('\n'));
+      console.log('[JSBSim] flight.xml written');
+
+      const scriptOk = sdk.loadScript('scripts/flight.xml');
+      console.log('[JSBSim] loadScript result:', scriptOk);
+
+      const icOk = sdk.runIc();
+      console.log('[JSBSim] runIc result:', icOk);
+
+      const alt = sdk.getPropertyValue('position/h-sl-ft');
+      const lat = sdk.getPropertyValue('position/lat-geod-deg');
+      const lon = sdk.getPropertyValue('position/long-gc-deg');
+      console.log('[JSBSim] Init complete. alt:', alt, 'lat:', lat, 'lon:', lon);
     } catch(jsbErr) {
-      console.warn('[JSBSim] Init failed, using procedural physics:', jsbErr.message || jsbErr);
+      console.error('[JSBSim] Init FAILED:', jsbErr.message || jsbErr);
+      console.error('[JSBSim] Full error:', jsbErr);
       sdk = null;
     }
 
@@ -425,7 +471,7 @@ async function init() {
       const url = URL.createObjectURL(blob);
 
       modelEntity = viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(-80.29, 25.79, 1500*mPerFt),
+        position: Cesium.Cartesian3.fromDegrees(-80.2870, 25.7959, 10),
         model: {
           uri: url,
           minimumPixelSize: 64,
@@ -473,71 +519,92 @@ function gameLoop(now) {
   lastTime = now;
   fc++; ft += dt;
   if (ft >= 1) { fps = fc; fc = 0; ft = 0; }
-  if (paused || !sdk) return;
+  if (paused) return;
 
-  // Update controls
-  updateControls();
+  // Update controls (works with or without JSBSim)
+  updateControls(dt);
 
-  // Update autopilot
-  updateAP();
-
-  // Step JSBSim
-  try {
-    if(sdk.setDt) sdk.setDt(dt);
-    sdk.run();
-  } catch(e) {
-    console.error('[JSBSim] run() failed:', e.message);
+  // Step JSBSim if available
+  if (sdk) {
+    try {
+      updateAP();
+      if(sdk.setDt) sdk.setDt(dt);
+      sdk.run();
+    } catch(e) {
+      console.error('[JSBSim] run() failed:', e.message);
+    }
   }
 
-  // Read position from JSBSim
-  const lat = sdk.getPropertyValue('position/lat-geod-deg');
-  const lon = sdk.getPropertyValue('position/long-gc-deg');
-  const alt = sdk.getPropertyValue('position/h-sl-ft') * mPerFt;
-  const hdg = sdk.getPropertyValue('attitude/psi-deg');
-  const pitch = sdk.getPropertyValue('attitude/theta-deg');
-  const roll = sdk.getPropertyValue('attitude/phi-deg');
+  // Read position — from JSBSim if available, else use last known / defaults
+  const safeVal = (v, d) => (Number.isFinite(v) ? v : d);
+  let lat, lon, altM, hdg, pitch, roll;
+  if (sdk) {
+    lat = safeVal(sdk.getPropertyValue('position/lat-geod-deg'), 25.7959);
+    lon = safeVal(sdk.getPropertyValue('position/long-gc-deg'), -80.2870);
+    altM = safeVal(sdk.getPropertyValue('position/h-sl-ft'), 0) * mPerFt;
+    hdg = safeVal(sdk.getPropertyValue('attitude/psi-deg'), 90);
+    pitch = safeVal(sdk.getPropertyValue('attitude/theta-deg'), 0);
+    roll = safeVal(sdk.getPropertyValue('attitude/phi-deg'), 0);
+    // Store last known state
+    window._lastState = { lat, lon, altM, hdg, pitch, roll };
+  } else {
+    // Fallback: hold position when JSBSim unavailable
+    const s = window._lastState || { lat:25.7959, lon:-80.2870, altM:30, hdg:90, pitch:0, roll:0 };
+    lat = s.lat; lon = s.lon; altM = s.altM; hdg = s.hdg; pitch = s.pitch; roll = s.roll;
+  }
 
-  // Update CesiumJS camera
+  // Log first few frames for debugging
+  if (fc < 5) console.log('[Frame', fc, '] lat:', lat.toFixed(4), 'lon:', lon.toFixed(4), 'alt:', altM.toFixed(1)+'m', 'hdg:', hdg.toFixed(1), 'sdk:', !!sdk);
+
+  // Update CesiumJS camera — ALWAYS, regardless of JSBSim state
   const headingR = hdg * DEG;
-  const dist = 50;
-  const camLat = lat - Math.cos(headingR) * (dist/111000);
-  const camLon = lon - Math.sin(headingR) * (dist/(111000*Math.cos(lat*DEG)));
-  const camAlt = alt + dist*0.3;
-  viewer.camera.setView({
-    destination: Cesium.Cartesian3.fromDegrees(camLon, camLat, camAlt),
-    orientation: { heading: headingR, pitch: -0.3, roll: 0 }
-  });
+  const dist = 80;
+  const cosLat = Math.cos(lat * DEG) || 0.0001;
+  const camLat = lat - Math.cos(headingR) * (dist / 111000);
+  const camLon = lon - Math.sin(headingR) * (dist / (111000 * cosLat));
+  const camAlt = Math.max(altM + 20, 15);
+  try {
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(camLon, camLat, camAlt),
+      orientation: { heading: headingR, pitch: -0.3, roll: 0 }
+    });
+  } catch(e) {
+    console.warn('[Camera] setView failed:', e.message);
+  }
 
   // Update model entity position and orientation
   if (modelEntity) {
-    modelEntity.position = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
-    const hpr = new Cesium.HeadingPitchRoll(headingR, pitch*DEG, roll*DEG);
-    modelEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(
-      modelEntity.position.getValue(Cesium.JulianDate.now()), hpr
-    );
-    modelEntity.model.silhouetteSize = 0;
+    try {
+      const pos = Cesium.Cartesian3.fromDegrees(lon, lat, altM);
+      modelEntity.position = pos;
+      const hpr = new Cesium.HeadingPitchRoll(headingR, pitch * DEG, roll * DEG);
+      modelEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, hpr);
+    } catch(e) {}
   }
 
   // Draw HUD
   drawHUD();
 
   // Update info bar
-  const gs = sdk.getPropertyValue('velocities/vg-kts');
-  const ias = sdk.getPropertyValue('velocities/vc-kts');
-  const vsFpm = sdk.getPropertyValue('velocities/fps-fps') * 60;
-  const thr = sdk.getPropertyValue('fcs/throttle-cmd-norm');
-  document.getElementById('iGS').textContent = Math.round(gs);
-  document.getElementById('iAlt').textContent = Math.round(sdk.getPropertyValue('position/h-sl-ft'));
-  document.getElementById('iHdg').textContent = Math.round(hdg).toString().padStart(3,'0');
-  document.getElementById('iVS').textContent = Math.round(vsFpm);
-  document.getElementById('iThr').textContent = Math.round(thr*100);
+  if (sdk) {
+    try {
+      const gs = safeVal(sdk.getPropertyValue('velocities/vg-kts'), 0);
+      const ias = safeVal(sdk.getPropertyValue('velocities/vc-kts'), 0);
+      const vsFpm = safeVal(sdk.getPropertyValue('velocities/fps-fps'), 0) * 60;
+      const thr = safeVal(sdk.getPropertyValue('fcs/throttle-cmd-norm'), 0);
+      document.getElementById('iGS').textContent = Math.round(gs);
+      document.getElementById('iAlt').textContent = Math.round(sdk.getPropertyValue('position/h-sl-ft'));
+      document.getElementById('iHdg').textContent = Math.round(hdg).toString().padStart(3,'0');
+      document.getElementById('iVS').textContent = Math.round(vsFpm);
+      document.getElementById('iThr').textContent = Math.round(thr*100);
+    } catch(e) {}
+  }
   document.getElementById('iFPS').textContent = fps;
-  document.getElementById('iIAS').textContent = Math.round(ias);
 
   // Stall warning
-  const aoa = sdk.getPropertyValue('aero/alpha-deg');
-  const onGnd = sdk.getPropertyValue('gear/unit[0]/WOW');
-  document.getElementById('stallWarn').style.display = (aoa > 15 && !onGnd) ? 'block' : 'none';
+  const stallAoa = sdk ? safeVal(sdk.getPropertyValue('aero/alpha-deg'), 0) : 0;
+  const stallGnd = sdk ? safeVal(sdk.getPropertyValue('gear/unit[0]/WOW'), 1) : 1;
+  document.getElementById('stallWarn').style.display = (stallAoa > 15 && !stallGnd) ? 'block' : 'none';
 }
 
 // Start
