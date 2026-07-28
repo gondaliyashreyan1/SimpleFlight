@@ -1748,14 +1748,9 @@
       viewer.scene.fog.enabled = true;
       viewer.scene.fog.density = 0.0002;
       viewer.scene.globe.enableLighting = true;
-      // Terrain (uses default Ion token; may show watermark if not set)
-      try {
-        if (Cesium.Terrain && Cesium.Terrain.fromWorldTerrain) {
-          viewer.scene.terrainProvider = await Cesium.Terrain.fromWorldTerrain();
-        } else if (typeof Cesium.createWorldTerrain === 'function') {
-          viewer.scene.terrainProvider = Cesium.createWorldTerrain();
-        }
-      } catch (e) { console.warn('[Cesium] World terrain unavailable, using ellipsoid.', e); }
+      // Terrain: default to the token-free ellipsoid. World Terrain can be enabled
+      // later by pasting a valid Cesium Ion access token and clicking the button.
+      viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
 
       setLoading(50, 'Loading JSBSim WASM...');
       sdk = await JSBSimSdk.create({
