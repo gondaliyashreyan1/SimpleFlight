@@ -1435,16 +1435,16 @@
         if (!viewer) return;
         if (q === 'low') {
           viewer.scene.fxaa = false;
-          viewer.resolutionScale = 0.75;
-          viewer.targetFrameRate = 30;
+          if ('resolutionScale' in viewer) viewer.resolutionScale = 0.75;
+          if ('targetFrameRate' in viewer) viewer.targetFrameRate = 30;
         } else if (q === 'medium') {
           viewer.scene.fxaa = true;
-          viewer.resolutionScale = 1.0;
-          viewer.targetFrameRate = 60;
+          if ('resolutionScale' in viewer) viewer.resolutionScale = 1.0;
+          if ('targetFrameRate' in viewer) viewer.targetFrameRate = 60;
         } else {
           viewer.scene.fxaa = true;
-          viewer.resolutionScale = window.devicePixelRatio || 1.0;
-          viewer.targetFrameRate = 0;
+          if ('resolutionScale' in viewer) viewer.resolutionScale = window.devicePixelRatio || 1.0;
+          if ('targetFrameRate' in viewer) viewer.targetFrameRate = 0;
         }
       });
       document.getElementById('terrainDetail').addEventListener('change', e => {
@@ -1726,24 +1726,16 @@
     // ---- Init ----
     async function init() {
       setLoading(10, 'Initializing CesiumJS...');
-      // Disable Cesium Ion default token to prevent 401 errors when no token is provided.
-      // The sim uses ArcGIS imagery and ellipsoid terrain, so no Ion access is needed.
+      // Use CesiumWidget instead of Viewer so none of the Viewer UI widgets can
+      // make Cesium Ion requests. No Ion token is required.
       Cesium.Ion.defaultAccessToken = '';
       setLoading(25, 'Loading satellite imagery...');
-      viewer = new Cesium.Viewer('cesiumContainer', {
-        // Provide non-Ion imagery and terrain directly so the Viewer never requests Ion defaults.
+      viewer = new Cesium.CesiumWidget('cesiumContainer', {
         imageryProvider: new Cesium.UrlTemplateImageryProvider({
           url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
           maximumLevel: 18, credit: 'Esri'
         }),
-        terrainProvider: new Cesium.EllipsoidTerrainProvider(),
-        baseLayer: false,
-        sceneModePicker: false, baseLayerPicker: false,
-        geocoder: false, homeButton: false,
-        infoBox: false, selectionIndicator: false,
-        navigationHelpButton: false,
-        animation: false, timeline: false,
-        fullscreenButton: false, vrButton: false,
+        terrainProvider: new Cesium.EllipsoidTerrainProvider()
       });
 
       setLoading(35, 'Setting up atmosphere...');
@@ -1783,40 +1775,34 @@
       const real737Uri = 'https://raw.githubusercontent.com/yc4330/boeing737/main/b737-800_model.glb';
       const fallbackUri = generateAircraftGltfUri();
 
-      function createAircraftModel(uri) {
-        return viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(-80.2870, 25.7959, 1500 * mPerFt),
-          model: {
-            uri: uri,
-            minimumPixelSize: 64,
-            maximumScale: 20000,
-            scale: 1.0
+      async function createAircraftModel(uri) {
+        try {
+          let model;
+          if (Cesium.Model && typeof Cesium.Model.fromGltfAsync === 'function') {
+            model = await Cesium.Model.fromGltfAsync({ url: uri, scale: 1.0 });
+          } else if (Cesium.Model && typeof Cesium.Model.fromGltf === 'function') {
+            model = Cesium.Model.fromGltf({ url: uri, scale: 1.0 });
+          } else {
+            throw new Error('Cesium.Model.fromGltf/fromGltfAsync not available');
           }
-        });
+          viewer.scene.primitives.add(model);
+          return model;
+        } catch (err) {
+          console.error('[Model] Failed to load model from ' + uri, err);
+          return null;
+        }
       }
 
       if (window.location.protocol === 'file:') {
         // file:// cannot fetch cross-origin GLB; use local placeholder.
-        modelEntity = createAircraftModel(fallbackUri);
+        modelEntity = await createAircraftModel(fallbackUri);
       } else {
-        // Try to pre-load the real model to verify it exists. Use the legacy API if
-        // fromGltfAsync is not available in this Cesium build.
-        const loadRealModel = async () => {
-          try {
-            if (Cesium.Model && typeof Cesium.Model.fromGltfAsync === 'function') {
-              await Cesium.Model.fromGltfAsync({ url: real737Uri });
-            } else if (Cesium.Model && typeof Cesium.Model.fromGltf === 'function') {
-              Cesium.Model.fromGltf({ url: real737Uri });
-            } else {
-              throw new Error('Cesium.Model.fromGltf/fromGltfAsync not available');
-            }
-            modelEntity = createAircraftModel(real737Uri);
-          } catch (err) {
-            console.warn('[Model] Real 737 failed to load; falling back to placeholder', err);
-            modelEntity = createAircraftModel(fallbackUri);
-          }
-        };
-        loadRealModel();
+        try {
+          modelEntity = await createAircraftModel(real737Uri);
+        } catch (err) {
+          console.warn('[Model] Real 737 failed to load; falling back to placeholder', err);
+          modelEntity = await createAircraftModel(fallbackUri);
+        }
       }
 
       setLoading(90, 'Setting up HUD...');
@@ -1874,10 +1860,9 @@
       // Update model
       if (modelEntity) {
         const pos = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
-        modelEntity.position = pos;
         const headingR = hdg * DEG;
         const hpr = new Cesium.HeadingPitchRoll(headingR, pitch * DEG, roll * DEG);
-        modelEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, hpr);
+        modelEntity.modelMatrix = Cesium.Transforms.headingPitchRollToFixedFrame(pos, hpr);
       }
 
       // Update camera
