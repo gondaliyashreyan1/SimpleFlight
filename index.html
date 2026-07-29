@@ -1797,10 +1797,9 @@
         // file:// cannot fetch cross-origin GLB; use local placeholder.
         modelEntity = await createAircraftModel(fallbackUri);
       } else {
-        try {
-          modelEntity = await createAircraftModel(real737Uri);
-        } catch (err) {
-          console.warn('[Model] Real 737 failed to load; falling back to placeholder', err);
+        modelEntity = await createAircraftModel(real737Uri);
+        if (!modelEntity) {
+          console.warn('[Model] Real 737 failed to load; falling back to placeholder');
           modelEntity = await createAircraftModel(fallbackUri);
         }
       }
