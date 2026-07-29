@@ -1726,17 +1726,34 @@
     // ---- Init ----
     async function init() {
       setLoading(10, 'Initializing CesiumJS...');
-      // Use CesiumWidget instead of Viewer so none of the Viewer UI widgets can
-      // make Cesium Ion requests. No Ion token is required.
+      // Disable the default Ion token so Cesium never makes Ion requests.
       Cesium.Ion.defaultAccessToken = '';
       setLoading(25, 'Loading satellite imagery...');
-      viewer = new Cesium.CesiumWidget('cesiumContainer', {
-        imageryProvider: new Cesium.UrlTemplateImageryProvider({
+      console.log('[Cesium] Creating Viewer with baseLayer:false');
+      viewer = new Cesium.Viewer('cesiumContainer', {
+        baseLayer: false,
+        sceneModePicker: false, baseLayerPicker: false,
+        geocoder: false, homeButton: false,
+        infoBox: false, selectionIndicator: false,
+        navigationHelpButton: false,
+        animation: false, timeline: false,
+        fullscreenButton: false, vrButton: false,
+      });
+      console.log('[Cesium] Viewer created');
+
+      try {
+        console.log('[Cesium] Removing default imagery layers');
+        viewer.imageryLayers.removeAll();
+        console.log('[Cesium] Adding ArcGIS imagery');
+        viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
           url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
           maximumLevel: 18, credit: 'Esri'
-        }),
-        terrainProvider: new Cesium.EllipsoidTerrainProvider()
-      });
+        }));
+        console.log('[Cesium] ArcGIS imagery added');
+      } catch (e) {
+        console.error('[Cesium] Failed to set imagery layer:', e);
+        throw e;
+      }
 
       setLoading(35, 'Setting up atmosphere...');
       viewer.scene.skyAtmosphere.show = true;
@@ -1775,33 +1792,42 @@
       const real737Uri = 'https://raw.githubusercontent.com/yc4330/boeing737/main/b737-800_model.glb';
       const fallbackUri = generateAircraftGltfUri();
 
-      async function createAircraftModel(uri) {
-        try {
-          let model;
-          if (Cesium.Model && typeof Cesium.Model.fromGltfAsync === 'function') {
-            model = await Cesium.Model.fromGltfAsync({ url: uri, scale: 1.0 });
-          } else if (Cesium.Model && typeof Cesium.Model.fromGltf === 'function') {
-            model = Cesium.Model.fromGltf({ url: uri, scale: 1.0 });
-          } else {
-            throw new Error('Cesium.Model.fromGltf/fromGltfAsync not available');
+      function createAircraftModel(uri) {
+        console.log('[Model] Creating entity with URI:', uri.substring(0, 80) + (uri.length > 80 ? '...' : ''));
+        return viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(-80.2870, 25.7959, 1500 * mPerFt),
+          model: {
+            uri: uri,
+            minimumPixelSize: 64,
+            maximumScale: 20000,
+            scale: 1.0
           }
-          viewer.scene.primitives.add(model);
-          return model;
-        } catch (err) {
-          console.error('[Model] Failed to load model from ' + uri, err);
-          return null;
-        }
+        });
       }
 
       if (window.location.protocol === 'file:') {
         // file:// cannot fetch cross-origin GLB; use local placeholder.
-        modelEntity = await createAircraftModel(fallbackUri);
+        modelEntity = createAircraftModel(fallbackUri);
       } else {
-        modelEntity = await createAircraftModel(real737Uri);
-        if (!modelEntity) {
-          console.warn('[Model] Real 737 failed to load; falling back to placeholder');
-          modelEntity = await createAircraftModel(fallbackUri);
-        }
+        // Try to pre-load the real model to verify it exists.
+        const loadRealModel = async () => {
+          try {
+            console.log('[Model] Attempting to pre-load real 737 GLB');
+            if (Cesium.Model && typeof Cesium.Model.fromGltfAsync === 'function') {
+              await Cesium.Model.fromGltfAsync({ url: real737Uri });
+            } else if (Cesium.Model && typeof Cesium.Model.fromGltf === 'function') {
+              Cesium.Model.fromGltf({ url: real737Uri });
+            } else {
+              throw new Error('Cesium.Model.fromGltf/fromGltfAsync not available');
+            }
+            console.log('[Model] Real 737 pre-load succeeded');
+            modelEntity = createAircraftModel(real737Uri);
+          } catch (err) {
+            console.warn('[Model] Real 737 failed to load; falling back to placeholder', err);
+            modelEntity = createAircraftModel(fallbackUri);
+          }
+        };
+        loadRealModel();
       }
 
       setLoading(90, 'Setting up HUD...');
@@ -1859,9 +1885,10 @@
       // Update model
       if (modelEntity) {
         const pos = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
+        modelEntity.position = pos;
         const headingR = hdg * DEG;
         const hpr = new Cesium.HeadingPitchRoll(headingR, pitch * DEG, roll * DEG);
-        modelEntity.modelMatrix = Cesium.Transforms.headingPitchRollToFixedFrame(pos, hpr);
+        modelEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, hpr);
       }
 
       // Update camera
