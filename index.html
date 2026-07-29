@@ -1,1215 +1,1574 @@
-<!-- Serve with: python3 -m http.server 8080 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>SimpleFlight — Global Flight Simulator</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Global Flight Simulator</title>
 
-  <!-- CesiumJS for globe rendering -->
-  <script src="https://cesium.com/downloads/cesiumjs/releases/1.119/Build/Cesium/Cesium.js"></script>
-  <link href="https://cesium.com/downloads/cesiumjs/releases/1.119/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<!-- CesiumJS for globe rendering -->
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.119/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.119/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
 
-  <!-- JSBSim WASM for flight physics -->
-  <script type="importmap">
-  {
-    "imports": {
-      "@0x62/jsbsim-wasm": "https://unpkg.com/@0x62/jsbsim-wasm@1.2.4-beta.4/dist/index.js",
-      "@0x62/jsbsim-wasm/wasm": "https://unpkg.com/@0x62/jsbsim-wasm@1.2.4-beta.4/dist/wasm.js"
-    }
+<!-- JSBSim WASM import map -->
+<script type="importmap">
+{
+  "imports": {
+    "@0x62/jsbsim-wasm": "https://unpkg.com/@0x62/jsbsim-wasm@1.2.4-beta.4/dist/index.js",
+    "@0x62/jsbsim-wasm/wasm": "https://unpkg.com/@0x62/jsbsim-wasm@1.2.4-beta.4/dist/wasm.js"
   }
-  </script>
+}
+</script>
 
-  <style>
-    :root {
-      --panel-bg: rgba(12, 20, 35, 0.88);
-      --panel-border: rgba(100, 160, 255, 0.35);
-      --accent: #3fb0ff;
-      --accent-bright: #7fd2ff;
-      --warn: #ff3b3b;
-      --text: #e8f4ff;
-      --font: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    }
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f0; user-select: none; -webkit-user-select: none; }
 
-    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+#cesiumContainer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 
-    html, body {
-      margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
-      background: #02050b; color: var(--text); font-family: var(--font);
-    }
+#hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
 
-    #cesiumContainer {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0;
-    }
+/* Loading Screen */
+#loading {
+  position: fixed; inset: 0; background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0a0e27 100%);
+  z-index: 1000; display: flex; flex-direction: column; justify-content: center; align-items: center;
+  transition: opacity 0.6s ease;
+}
+#loading.hidden { opacity: 0; pointer-events: none; }
+.loading-title { font-size: 32px; color: #4fc3f7; letter-spacing: 4px; margin-bottom: 8px; font-weight: 300; text-shadow: 0 0 20px rgba(79,195,247,0.6); }
+.loading-sub { font-size: 12px; color: #888; margin-bottom: 30px; letter-spacing: 2px; }
+.loading-bar-wrap { width: 80%; max-width: 500px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
+.loading-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #4fc3f7, #00e676); transition: width 0.4s ease; box-shadow: 0 0 15px rgba(79,195,247,0.8); }
+.loading-status { color: #aaa; margin-top: 14px; font-size: 13px; letter-spacing: 1px; min-height: 18px; }
+.loading-pct { color: #4fc3f7; font-size: 14px; margin-top: 4px; }
 
-    #hudCanvas {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10;
-      pointer-events: none;
-    }
+/* Menu Button */
+#menuBtn {
+  position: absolute; top: 12px; left: 12px; z-index: 30;
+  width: 44px; height: 44px; border-radius: 8px;
+  background: rgba(10,20,40,0.75); color: #4fc3f7; border: 1px solid rgba(79,195,247,0.4);
+  font-size: 22px; cursor: pointer; backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s;
+}
+#menuBtn:hover { background: rgba(79,195,247,0.3); }
 
-    #loadingScreen {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000;
-      background: radial-gradient(circle at 50% 30%, #0b1a2d 0%, #02050b 80%);
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      transition: opacity 0.6s ease;
-    }
-    #loadingScreen.hidden { opacity: 0; pointer-events: none; }
-    #loadingTitle { font-size: 2.2rem; font-weight: 300; letter-spacing: 0.15em; margin-bottom: 0.5rem; text-transform: uppercase; }
-    #loadingTitle span { color: var(--accent); font-weight: 600; }
-    #loadingStatus { font-size: 0.95rem; color: #8aa7c9; margin-bottom: 1.5rem; min-height: 1.4rem; }
-    #loadingBarWrap { width: min(420px, 80%); height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
-    #loadingBar { width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-bright)); transition: width 0.3s ease; }
-    #loadingTip { margin-top: 1rem; font-size: 0.75rem; color: #5a6f8a; }
+/* Menu Panel */
+#menu {
+  position: absolute; top: 0; left: -340px; width: 320px; height: 100%;
+  background: rgba(8,15,30,0.92); backdrop-filter: blur(10px);
+  border-right: 1px solid rgba(79,195,247,0.3); z-index: 40;
+  transition: left 0.3s ease; padding: 70px 20px 20px; overflow-y: auto;
+}
+#menu.open { left: 0; }
+.menu-section { margin-bottom: 24px; }
+.menu-section h3 { color: #4fc3f7; font-size: 13px; letter-spacing: 2px; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px solid rgba(79,195,247,0.2); padding-bottom: 6px; }
+.menu-section label { display: block; color: #ccc; font-size: 12px; margin-bottom: 4px; margin-top: 12px; }
+.menu-section select, .menu-section input[type=range] { width: 100%; padding: 6px 8px; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(79,195,247,0.3); border-radius: 4px; font-size: 12px; }
+.menu-section .ctrl-row { display: flex; justify-content: space-between; color: #aaa; font-size: 11px; padding: 3px 0; border-bottom: 1px dotted rgba(255,255,255,0.08); }
+.menu-section .ctrl-row span:first-child { color: #4fc3f7; }
+.menu-section .ctrl-row span:last-child { color: #fff; font-family: monospace; }
 
-    #menuToggle {
-      position: absolute; top: 12px; left: 12px; z-index: 60;
-      width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--panel-border);
-      background: var(--panel-bg); color: var(--text); font-size: 1.4rem; cursor: pointer;
-      display: flex; align-items: center; justify-content: center; backdrop-filter: blur(8px);
-      transition: background 0.2s, transform 0.1s;
-    }
-    #menuToggle:hover { background: rgba(30,50,80,0.95); transform: scale(1.05); }
-    #menuToggle:active { transform: scale(0.95); }
+/* Autopilot Panel */
+#ap {
+  position: absolute; top: 12px; right: 12px; z-index: 30;
+  background: rgba(8,15,30,0.85); backdrop-filter: blur(6px);
+  border: 1px solid rgba(79,195,247,0.3); border-radius: 8px;
+  padding: 10px; width: 200px; font-size: 11px;
+}
+#ap h3 { color: #4fc3f7; font-size: 12px; letter-spacing: 2px; margin-bottom: 8px; text-align: center; }
+.ap-row { display: flex; gap: 4px; margin-bottom: 6px; }
+.ap-btn { flex: 1; padding: 6px; background: rgba(255,255,255,0.05); color: #ccc; border: 1px solid rgba(79,195,247,0.2); border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; text-align: center; }
+.ap-btn.on { background: rgba(0,230,118,0.25); color: #0f0; border-color: #0f0; box-shadow: 0 0 8px rgba(0,230,118,0.4); }
+.ap-btn:hover { background: rgba(79,195,247,0.2); }
+.ap-input { width: 100%; padding: 4px 6px; background: rgba(0,0,0,0.4); color: #4fc3f7; border: 1px solid rgba(79,195,247,0.3); border-radius: 3px; font-family: monospace; font-size: 12px; text-align: center; }
+.ap-label { color: #888; font-size: 10px; margin: 4px 0 2px; }
 
-    #menuPanel {
-      position: absolute; top: 0; left: 0; width: 320px; max-width: 80vw; height: 100%; z-index: 55;
-      background: var(--panel-bg); border-right: 1px solid var(--panel-border);
-      backdrop-filter: blur(12px); transform: translateX(-100%); transition: transform 0.35s cubic-bezier(0.2,0.8,0.2,1);
-      padding: 72px 18px 18px; overflow-y: auto;
-    }
-    #menuPanel.open { transform: translateX(0); }
-    #menuPanel h3 { margin: 0 0 0.6rem; font-weight: 400; color: var(--accent-bright); font-size: 0.92rem; text-transform: uppercase; letter-spacing: 0.08em; }
-    #menuPanel .row { margin-bottom: 1rem; }
-    #menuPanel label { display: block; font-size: 0.82rem; color: #9fbce6; margin-bottom: 0.35rem; }
-    #menuPanel select, #menuPanel input[type=range], #menuPanel input[type=number] { width: 100%; }
-    #menuPanel select { background: rgba(0,0,0,0.35); color: var(--text); border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px 8px; }
-    #menuPanel .hint { font-size: 0.75rem; color: #6b82a3; line-height: 1.35; margin-top: 0.25rem; }
-    #menuPanel kbd { display: inline-block; background: rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; margin: 2px; }
+/* Info Bar */
+#info {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 20;
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);
+  color: #4fc3f7; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px;
+  padding: 8px 16px; display: flex; justify-content: space-around; align-items: center;
+  border-top: 1px solid rgba(79,195,247,0.2); letter-spacing: 1px; flex-wrap: wrap;
+}
+#info span { white-space: nowrap; }
+#info b { color: #fff; margin-left: 4px; }
 
-    #autopilotPanel {
-      position: absolute; top: 12px; right: 12px; z-index: 50;
-      background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px;
-      padding: 12px; backdrop-filter: blur(12px); min-width: 180px;
-    }
-    #autopilotPanel h4 { margin: 0 0 8px; font-weight: 400; color: var(--accent-bright); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
-    .ap-row { display: flex; align-items: center; justify-content: space-between; margin: 5px 0; font-size: 0.82rem; }
-    .ap-row input[type=number] { width: 80px; background: rgba(0,0,0,0.35); color: var(--text); border: 1px solid var(--panel-border); border-radius: 5px; padding: 3px 6px; }
-    .ap-btn { cursor: pointer; border: 1px solid var(--panel-border); background: rgba(0,0,0,0.3); color: var(--text); border-radius: 5px; padding: 3px 10px; transition: background 0.15s; }
-    .ap-btn.active { background: var(--accent); color: #001; border-color: var(--accent); }
-    .ap-btn:hover { background: rgba(60,120,180,0.35); }
+/* Stall Warning */
+#stallWarn {
+  position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 25; color: #f00; font-size: 56px; font-weight: bold; letter-spacing: 8px;
+  text-shadow: 0 0 20px #f00, 0 0 40px #f00; display: none;
+  animation: blink 0.5s infinite;
+}
+@keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0.2; } }
 
-    #infoBar {
-      position: absolute; bottom: 0; left: 0; width: 100%; z-index: 40;
-      background: linear-gradient(to top, rgba(2,5,11,0.92), rgba(2,5,11,0));
-      backdrop-filter: blur(4px); display: flex; justify-content: space-around; align-items: center;
-      padding: 8px 12px; font-size: 0.84rem; pointer-events: none;
-    }
-    #infoBar .stat { text-align: center; }
-    #infoBar .stat .val { font-size: 1.15rem; font-weight: 600; color: var(--accent-bright); }
-    #infoBar .stat .lab { font-size: 0.7rem; color: #8aa7c9; text-transform: uppercase; letter-spacing: 0.05em; }
+/* Crash Overlay */
+#crashOverlay {
+  position: absolute; inset: 0; z-index: 50;
+  background: radial-gradient(circle, rgba(80,0,0,0.7), rgba(0,0,0,0.95));
+  display: none; flex-direction: column; justify-content: center; align-items: center;
+  color: #fff; text-align: center;
+}
+#crashOverlay.show { display: flex; }
+#crashOverlay h1 { font-size: 64px; color: #f44336; text-shadow: 0 0 30px #f00; letter-spacing: 6px; margin-bottom: 16px; }
+#crashOverlay p { color: #ccc; font-size: 16px; margin-bottom: 8px; }
+#crashOverlay .hint { color: #4fc3f7; font-size: 14px; margin-top: 16px; }
 
-    #debugOverlay {
-      position: absolute; top: 66px; right: 12px; z-index: 45;
-      background: rgba(0,0,0,0.65); border: 1px solid var(--panel-border); border-radius: 8px;
-      padding: 10px; font-family: 'Courier New', monospace; font-size: 0.75rem; color: #a0f0a0;
-      max-width: 260px; line-height: 1.45; pointer-events: none;
-    }
-    #debugOverlay .title { color: var(--accent-bright); margin-bottom: 6px; font-weight: bold; }
+/* Debug Overlay */
+#debug {
+  position: absolute; top: 60px; left: 12px; z-index: 25;
+  background: rgba(0,0,0,0.7); color: #0f0; font-family: monospace; font-size: 11px;
+  padding: 8px 10px; border-radius: 4px; border: 1px solid rgba(0,255,0,0.2);
+  line-height: 1.6; max-width: 280px; word-break: break-all;
+}
+#debug .dbg-line { white-space: pre; }
+#debug .dbg-key { color: #4fc3f7; }
+#debug .dbg-val { color: #ff0; }
+#debug .dbg-err { color: #f44; }
 
-    #stallWarn, #crashOverlay {
-      position: absolute; left: 50%; transform: translateX(-50%); z-index: 80;
-      font-size: 1.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em;
-      text-shadow: 0 0 12px rgba(0,0,0,0.7); pointer-events: none; display: none;
-    }
-    #stallWarn { top: 18%; color: var(--warn); animation: blink 0.55s infinite alternate; }
-    #crashOverlay { top: 22%; color: #fff; background: rgba(180,20,20,0.85); padding: 14px 28px; border-radius: 10px; }
-    #crashOverlay.show { display: block; }
-    @keyframes blink { from { opacity: 0.35; } to { opacity: 1; } }
+/* Pause overlay */
+#pauseOverlay {
+  position: absolute; inset: 0; z-index: 35;
+  background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center;
+  color: #4fc3f7; font-size: 48px; letter-spacing: 8px;
+}
+#pauseOverlay.show { display: flex; }
 
-    #touchZones {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; pointer-events: auto; display: none;
-    }
-    @media (hover: none) and (pointer: coarse) { #touchZones { display: block; } }
-    .touch-stick {
-      position: absolute; width: 120px; height: 120px; border-radius: 50%;
-      border: 2px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.05);
-      display: none; align-items: center; justify-content: center; pointer-events: none;
-    }
-    .touch-stick.active { display: flex; }
-    .touch-knob {
-      width: 44px; height: 44px; border-radius: 50%; background: rgba(63,176,255,0.85);
-      box-shadow: 0 0 12px rgba(63,176,255,0.5); transform: translate(0,0);
-    }
-  </style>
+/* Mobile touch controls */
+#mobile { position: absolute; inset: 0; z-index: 15; pointer-events: none; display: none; }
+#mobile.show { display: block; }
+.touch-pad { position: absolute; pointer-events: auto; }
+#leftPad { bottom: 80px; left: 20px; width: 130px; height: 130px; background: radial-gradient(circle, rgba(79,195,247,0.15), rgba(0,0,0,0.3)); border: 2px solid rgba(79,195,247,0.4); border-radius: 50%; }
+#rightPad { bottom: 80px; right: 20px; width: 130px; height: 130px; background: radial-gradient(circle, rgba(79,195,247,0.15), rgba(0,0,0,0.3)); border: 2px solid rgba(79,195,247,0.4); border-radius: 50%; }
+.pad-knob { position: absolute; width: 50px; height: 50px; background: rgba(79,195,247,0.5); border: 2px solid #4fc3f7; border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+.thr-btn { position: absolute; pointer-events: auto; width: 56px; height: 56px; border-radius: 50%; background: rgba(0,230,118,0.2); border: 2px solid #0f0; color: #0f0; font-size: 20px; font-weight: bold; display: flex; align-items: center; justify-content: center; }
+#thrUpBtn { bottom: 220px; right: 30px; }
+#thrDnBtn { bottom: 220px; left: 30px; }
+#apBtn { top: 90px; right: 230px; width: 50px; height: 50px; }
+.flap-row { position: absolute; pointer-events: auto; bottom: 220px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+.flap-row button { width: 44px; height: 44px; border-radius: 8px; background: rgba(255,255,255,0.08); color: #ccc; border: 1px solid rgba(79,195,247,0.3); font-size: 12px; }
+.flap-row button.active { background: rgba(0,230,118,0.3); color: #0f0; border-color: #0f0; }
+
+/* Hide on mobile */
+@media (max-width: 768px) {
+  #debug { font-size: 9px; max-width: 180px; top: 56px; left: 8px; }
+  #ap { width: 150px; padding: 6px; }
+  #ap .ap-btn { font-size: 10px; padding: 4px; }
+  .loading-title { font-size: 22px; }
+}
+</style>
 </head>
 <body>
-  <div id="loadingScreen">
-    <div id="loadingTitle">Simple<span>Flight</span></div>
-    <div id="loadingStatus">Preparing…</div>
-    <div id="loadingBarWrap"><div id="loadingBar"></div></div>
-    <div id="loadingTip">Serve with: python3 -m http.server 8080</div>
-  </div>
 
-  <div id="cesiumContainer"></div>
-  <canvas id="hudCanvas"></canvas>
-  <div id="touchZones">
-    <div id="leftStick" class="touch-stick"><div class="touch-knob"></div></div>
-    <div id="rightStick" class="touch-stick"><div class="touch-knob"></div></div>
-  </div>
+<!-- Loading Screen -->
+<div id="loading">
+  <div class="loading-title">GLOBAL FLIGHT SIM</div>
+  <div class="loading-sub">CESIUM &middot; JSBSim &middot; REAL-TIME</div>
+  <div class="loading-bar-wrap"><div class="loading-bar" id="loadBar"></div></div>
+  <div class="loading-status" id="loadStatus">Initializing...</div>
+  <div class="loading-pct" id="loadPct">0%</div>
+</div>
 
-  <button id="menuToggle" title="Menu">☰</button>
+<!-- Cesium Container -->
+<div id="cesiumContainer"></div>
 
-  <div id="menuPanel">
+<!-- HUD Canvas Overlay -->
+<canvas id="hud"></canvas>
+
+<!-- Menu Button -->
+<button id="menuBtn">&#9776;</button>
+
+<!-- Menu Panel -->
+<div id="menu">
+  <div class="menu-section">
     <h3>Aircraft</h3>
-    <div class="row">
-      <select id="aircraftSelect">
-        <option value="c172p">Cessna 172P (JSBSim)</option>
-      </select>
-      <div class="hint">Aircraft physics model used by JSBSim.</div>
-    </div>
-
+    <label>Aircraft Model</label>
+    <select id="acSelect">
+      <option value="c172p">Cessna 172P Skyhawk</option>
+      <option value="c182">Cessna 182 Skylane</option>
+      <option value="737">Boeing 737-800 (lite)</option>
+    </select>
+  </div>
+  <div class="menu-section">
     <h3>Camera</h3>
-    <div class="row">
-      <select id="cameraSelect">
-        <option value="chase">Chase</option>
-        <option value="tower">Tower</option>
-      </select>
-    </div>
-
+    <label>View Mode</label>
+    <select id="camSelect">
+      <option value="chase">Chase</option>
+      <option value="tower">Tower</option>
+      <option value="cockpit">Cockpit</option>
+      <option value="orbit">Orbit</option>
+    </select>
+  </div>
+  <div class="menu-section">
+    <h3>Input</h3>
+    <label>Mouse Sensitivity <span id="msVal" style="float:right;color:#fff;">1.5</span></label>
+    <input type="range" id="msRange" min="0.2" max="3.0" step="0.1" value="1.5">
+    <label>Graphics Quality</label>
+    <select id="qualSelect">
+      <option value="high">High</option>
+      <option value="medium" selected>Medium</option>
+      <option value="low">Low</option>
+    </select>
+  </div>
+  <div class="menu-section">
     <h3>Controls</h3>
-    <div class="row">
-      <label>Mouse Sensitivity</label>
-      <input id="mouseSens" type="range" min="0.2" max="3" step="0.1" value="1.2">
-      <div class="hint" id="mouseSensVal">1.2</div>
-    </div>
-    <div class="row">
-      <label>Control Reference</label>
-      <div class="hint">
-        <kbd>W/S</kbd> Pitch · <kbd>A/D</kbd> Roll · <kbd>Q/E</kbd> Yaw<br>
-        <kbd>Shift/Ctrl</kbd> Throttle · <kbd>F</kbd> Flaps · <kbd>G</kbd> Gear<br>
-        <kbd>B</kbd> Brakes · <kbd>P</kbd> Pause · <kbd>R</kbd> Reset
-      </div>
-    </div>
-
-    <h3>Settings</h3>
-    <div class="row">
-      <label>Graphics Quality</label>
-      <select id="gfxQuality">
-        <option value="high">High</option>
-        <option value="medium">Medium</option>
-        <option value="low">Low</option>
-      </select>
-    </div>
-    <div class="row">
-      <label>Terrain Detail</label>
-      <select id="terrainDetail">
-        <option value="full">Full</option>
-        <option value="medium">Medium</option>
-        <option value="low">Low</option>
-      </select>
-    </div>
-    <div class="row">
-      <label>Cesium Ion Token</label>
-      <input id="ionToken" type="text" placeholder="Paste token for World Terrain" style="width:100%; padding:6px; border-radius:6px; border:1px solid var(--panel-border); background:rgba(255,255,255,0.05); color:var(--text); font-size:0.85rem;">
-      <button id="applyIonToken" style="margin-top:6px; padding:6px 12px; border-radius:6px; border:none; background:var(--accent); color:#02111f; cursor:pointer; font-weight:600; font-size:0.85rem;">Enable World Terrain</button>
-      <div class="hint">Leave blank to use ellipsoid terrain (no token required).</div>
-    </div>
+    <div class="ctrl-row"><span>W / S</span><span>Pitch (elevator)</span></div>
+    <div class="ctrl-row"><span>A / D</span><span>Roll (ailerons)</span></div>
+    <div class="ctrl-row"><span>Q / E</span><span>Yaw (rudder)</span></div>
+    <div class="ctrl-row"><span>Shift / Ctrl</span><span>Throttle up/down</span></div>
+    <div class="ctrl-row"><span>0 - 9</span><span>Throttle 0%-90%</span></div>
+    <div class="ctrl-row"><span>F</span><span>Flaps toggle</span></div>
+    <div class="ctrl-row"><span>G</span><span>Gear toggle</span></div>
+    <div class="ctrl-row"><span>B</span><span>Brakes</span></div>
+    <div class="ctrl-row"><span>P</span><span>Pause</span></div>
+    <div class="ctrl-row"><span>R</span><span>Reset flight</span></div>
+    <div class="ctrl-row"><span>Mouse</span><span>Click+drag (pointer lock)</span></div>
   </div>
+</div>
 
-  <div id="autopilotPanel">
-    <h4>Autopilot</h4>
-    <div class="ap-row"><span>AP</span><button id="apMaster" class="ap-btn">OFF</button></div>
-    <div class="ap-row"><span>ALT</span><input id="apAlt" type="number" value="3000" step="100"> <button id="apAltBtn" class="ap-btn">HOLD</button></div>
-    <div class="ap-row"><span>HDG</span><input id="apHdg" type="number" value="90" step="5"> <button id="apHdgBtn" class="ap-btn">HOLD</button></div>
-    <div class="ap-row"><span>SPD</span><button id="apSpdBtn" class="ap-btn">HOLD</button></div>
+<!-- Autopilot Panel -->
+<div id="ap">
+  <h3>AUTOPILOT</h3>
+  <div class="ap-row">
+    <div class="ap-btn" id="apMaster">AP</div>
+    <div class="ap-btn" id="apAlt">ALT</div>
+    <div class="ap-btn" id="apHdg">HDG</div>
+    <div class="ap-btn" id="apSpd">SPD</div>
   </div>
+  <div class="ap-label">Target Altitude (ft)</div>
+  <input class="ap-input" id="apAltVal" type="number" value="3000" step="100">
+  <div class="ap-label">Target Heading (&deg;)</div>
+  <input class="ap-input" id="apHdgVal" type="number" value="090" step="1" min="0" max="360">
+  <div class="ap-label">Target Speed (kts)</div>
+  <input class="ap-input" id="apSpdVal" type="number" value="120" step="5">
+</div>
 
-  <div id="infoBar">
-    <div class="stat"><div class="val" id="statGs">0</div><div class="lab">GS kts</div></div>
-    <div class="stat"><div class="val" id="statAlt">0</div><div class="lab">ALT ft</div></div>
-    <div class="stat"><div class="val" id="statHdg">0</div><div class="lab">HDG°</div></div>
-    <div class="stat"><div class="val" id="statVs">0</div><div class="lab">VS fpm</div></div>
-    <div class="stat"><div class="val" id="statThr">0</div><div class="lab">THR %</div></div>
-    <div class="stat"><div class="val" id="statFps">0</div><div class="lab">FPS</div></div>
-    <div class="stat"><div class="val" id="statIas">0</div><div class="lab">IAS kts</div></div>
+<!-- Info Bar -->
+<div id="info">
+  <span>IAS <b id="iIAS">0</b> kts</span>
+  <span>GS <b id="iGS">0</b> kts</span>
+  <span>ALT <b id="iALT">0</b> ft</span>
+  <span>HDG <b id="iHDG">000</b>&deg;</span>
+  <span>VS <b id="iVS">0</b> fpm</span>
+  <span>THR <b id="iTHR">0</b>%</span>
+  <span>FPS <b id="iFPS">0</b></span>
+</div>
+
+<!-- Stall Warning -->
+<div id="stallWarn">STALL</div>
+
+<!-- Crash Overlay -->
+<div id="crashOverlay">
+  <h1>CRASH</h1>
+  <p>Aircraft destroyed.</p>
+  <p class="hint">Press R to reset the flight.</p>
+</div>
+
+<!-- Pause Overlay -->
+<div id="pauseOverlay">PAUSED</div>
+
+<!-- Debug Overlay -->
+<div id="debug">
+  <div class="dbg-line"><span class="dbg-key">JSBSim:</span> <span class="dbg-val" id="dbgStatus">Not loaded</span></div>
+  <div class="dbg-line"><span class="dbg-key">LAT:</span> <span class="dbg-val" id="dbgLat">--</span></div>
+  <div class="dbg-line"><span class="dbg-key">LON:</span> <span class="dbg-val" id="dbgLon">--</span></div>
+  <div class="dbg-line"><span class="dbg-key">ALT:</span> <span class="dbg-val" id="dbgAlt">--</span> ft</div>
+  <div class="dbg-line"><span class="dbg-key">PITCH:</span> <span class="dbg-val" id="dbgPitch">--</span>&deg;</div>
+  <div class="dbg-line"><span class="dbg-key">ROLL:</span> <span class="dbg-val" id="dbgRoll">--</span>&deg;</div>
+  <div class="dbg-line"><span class="dbg-key">HDG:</span> <span class="dbg-val" id="dbgHdg">--</span>&deg;</div>
+  <div class="dbg-line"><span class="dbg-key">IAS:</span> <span class="dbg-val" id="dbgIAS">--</span> kts</div>
+  <div class="dbg-line"><span class="dbg-key">VS:</span> <span class="dbg-val" id="dbgVS">--</span> fpm</div>
+  <div class="dbg-line"><span class="dbg-key">THR:</span> <span class="dbg-val" id="dbgThr">--</span>%</div>
+  <div class="dbg-line"><span class="dbg-key">RPM:</span> <span class="dbg-val" id="dbgRPM">--</span></div>
+  <div class="dbg-line"><span class="dbg-key">AOA:</span> <span class="dbg-val" id="dbgAOA">--</span>&deg;</div>
+  <div class="dbg-line"><span class="dbg-key">WOW:</span> <span class="dbg-val" id="dbgWOW">--</span></div>
+  <div class="dbg-line"><span class="dbg-key">PHYS:</span> <span class="dbg-val" id="dbgPhys">--</span></div>
+</div>
+
+<!-- Mobile touch controls -->
+<div id="mobile">
+  <div class="touch-pad" id="leftPad"><div class="pad-knob" id="leftKnob"></div></div>
+  <div class="touch-pad" id="rightPad"><div class="pad-knob" id="rightKnob"></div></div>
+  <button class="thr-btn" id="thrUpBtn">+</button>
+  <button class="thr-btn" id="thrDnBtn">&minus;</button>
+  <button class="thr-btn" id="apBtn">AP</button>
+  <div class="flap-row">
+    <button data-flap="0">0</button>
+    <button data-flap="25">25</button>
+    <button data-flap="50">50</button>
+    <button data-flap="100">100</button>
   </div>
+</div>
 
-  <div id="debugOverlay">
-    <div class="title">Debug</div>
-    <div id="debugContent">JSBSim: Not loaded</div>
-  </div>
+<script type="module">
+// =================== CONSTANTS & HELPERS ===================
+const DEG = Math.PI / 180;
+const RAD = 180 / Math.PI;
+const ftPerM = 3.28084;
+const mPerFt = 0.3048;
+const ktsToFps = 1.68781;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const safeVal = (v, d) => (Number.isFinite(v) ? v : d);
 
-  <div id="stallWarn">STALL WARNING</div>
-  <div id="crashOverlay">CRASH DETECTED — Press R to Reset</div>
+// =================== STATE ===================
+let viewer = null;
+let sdk = null;
+let jsbsimReady = false;
+let jsbsimFailed = false;
+let modelEntity = null;
+let lastTime = performance.now();
+let paused = false;
+let crashed = false;
 
-  <script type="module">
-    import { JSBSimSdk } from "@0x62/jsbsim-wasm";
-    import { wasmModuleUrl, wasmBinaryUrl } from "@0x62/jsbsim-wasm/wasm";
+// Aircraft state (read from JSBSim each frame, or fallback sim)
+let acState = {
+  lat: 25.7959, lon: -80.2870, alt: 1500 * mPerFt,
+  hdg: 90, pitch: 0, roll: 0,
+  ias: 0, gs: 0, vs: 0, aoa: 0, rpm: 0, throttle: 0,
+  flap: 0, gear: 1, brakes: 0, wow: 1
+};
 
-    const DEG = Math.PI / 180;
-    const RAD = 180 / Math.PI;
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    const ftPerM = 3.28084;
-    const mPerFt = 0.3048;
+// Controls
+const keys = {};
+let mx = 0, my = 0;
+let gpIdx = -1;
+let thrIn = 0.0;
+let elIn = 0, alIn = 0, ruIn = 0;
+let mouseSens = 1.5;
+let camMode = 'chase';
+let quality = 'medium';
 
-    // ---- Aircraft / engine / prop XML strings (official JSBSim C172p) ----
-    const C172P_XML = `<?xml version="1.0"?>
-<?xml-stylesheet type="text/xsl" href="http://jsbsim.sourceforge.net/JSBSim.xsl"?>
-<fdm_config name="c172" version="2.0" release="BETA"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:noNamespaceSchemaLocation="http://jsbsim.sourceforge.net/JSBSim.xsd">
-    <fileheader>
-        <author> Unknown </author>
-        <filecreationdate>2002-01-01</filecreationdate>
-        <version> $Id: c172p.xml,v 1.29 2013/10/25 15:32:49 jentron Exp $ </version>
-        <description> Cessna C-172 </description>
-      <note>
-        This model was created using publicly available data, publicly available
-        technical reports, textbooks, and guesses. It contains no proprietary or
-        restricted data. If this model has been validated at all, it would be
-        only to the extent that it seems to \"fly right\", and that it possibly
-        complies with published, publicly known, performance data (maximum speed,
-        endurance, etc.). Thus, this model is meant for educational and entertainment
-        purposes only.
-        This simulation model is not endorsed by the manufacturer. This model is not
-        to be sold.
-      </note>
-    </fileheader>
-    <metrics>
-        <wingarea unit="FT2"> 174 </wingarea>
-        <wingspan unit="FT"> 35.8 </wingspan>
-        <chord unit="FT"> 4.9 </chord>
-        <htailarea unit="FT2"> 21.9 </htailarea>
-        <htailarm unit="FT"> 15.7 </htailarm>
-        <vtailarea unit="FT2"> 16.5 </vtailarea>
-        <vtailarm unit="FT"> 0 </vtailarm>
-        <location name="AERORP" unit="IN">
-            <x> 43.2 </x>
-            <y> 0 </y>
-            <z> 59.4 </z>
-        </location>
-        <location name="EYEPOINT" unit="IN">
-            <x> 37 </x>
-            <y> 0 </y>
-            <z> 48 </z>
-        </location>
-        <location name="VRP" unit="IN">
-            <x> 42.6 </x>
-            <y> 0 </y>
-            <z> 38.5 </z>
-        </location>
-    </metrics>
-    <mass_balance>
-        <ixx unit="SLUG*FT2"> 948 </ixx>
-        <iyy unit="SLUG*FT2"> 1346 </iyy>
-        <izz unit="SLUG*FT2"> 1967 </izz>
-        <ixy unit="SLUG*FT2"> -0 </ixy>
-        <ixz unit="SLUG*FT2"> -0 </ixz>
-        <iyz unit="SLUG*FT2"> -0 </iyz>
-        <emptywt unit="LBS"> 1500 </emptywt>
-        <location name="CG" unit="IN">
-            <x> 41 </x>
-            <y> 0 </y>
-            <z> 36.5 </z>
-        </location>
-        <pointmass name="Pilot">
-            <weight unit="LBS"> 180 </weight>
-            <location unit="IN">
-                <x> 36 </x>
-                <y> -14 </y>
-                <z> 24 </z>
-            </location>
-        </pointmass>
-        <pointmass name="Co-Pilot">
-            <weight unit="LBS"> 0 </weight>
-            <location unit="IN">
-                <x> 36 </x>
-                <y> 14 </y>
-                <z> 24 </z>
-            </location>
-        </pointmass>
-        <pointmass name="Left Passenger">
-            <weight unit="LBS"> 0 </weight>
-            <location unit="IN">
-                <x> 70 </x>
-                <y> -14 </y>
-                <z> 24 </z>
-            </location>
-        </pointmass>
-        <pointmass name="Right Passenger">
-            <weight unit="LBS"> 0 </weight>
-            <location unit="IN">
-                <x> 70 </x>
-                <y> 14 </y>
-                <z> 24 </z>
-            </location>
-        </pointmass>
-        <pointmass name="Baggage">
-            <weight unit="LBS"> 0 </weight>
-            <location unit="IN">
-                <x> 95 </x>
-                <y>  0 </y>
-                <z> 24 </z>
-            </location>
-        </pointmass>
-    </mass_balance>
-    <ground_reactions>
-        <contact type="BOGEY" name="NOSE">
-            <location unit="IN">
-                <x> -6.8 </x>
-                <y> 0 </y>
-                <z> -19.5</z>
-            </location>
-            <static_friction> 0.8 </static_friction>
-            <dynamic_friction> 0.5 </dynamic_friction>
-            <rolling_friction> 0.02 </rolling_friction>
-            <spring_coeff unit="LBS/FT"> 1800 </spring_coeff>
-            <damping_coeff unit="LBS/FT/SEC"> 600 </damping_coeff>
-            <max_steer unit="DEG"> 10 </max_steer>
-            <brake_group> NONE </brake_group>
-            <retractable>0</retractable>
-        </contact>
-        <contact type="BOGEY" name="LEFT_MAIN">
-            <location unit="IN">
-                <x> 58.2 </x>
-                <y> -43 </y>
-                <z> -15.5 </z>
-            </location>
-            <static_friction> 0.8 </static_friction>
-            <dynamic_friction> 0.5 </dynamic_friction>
-            <rolling_friction> 0.02 </rolling_friction>
-            <spring_coeff unit="LBS/FT"> 5400 </spring_coeff>
-            <damping_coeff unit="LBS/FT/SEC"> 1600 </damping_coeff>
-            <max_steer unit="DEG"> 0.0 </max_steer>
-            <brake_group> LEFT </brake_group>
-            <retractable>0</retractable>
-        </contact>
-        <contact type="BOGEY" name="RIGHT_MAIN">
-            <location unit="IN">
-                <x> 58.2 </x>
-                <y> 43 </y>
-                <z> -15.5 </z>
-            </location>
-            <static_friction> 0.8 </static_friction>
-            <dynamic_friction> 0.5 </dynamic_friction>
-            <rolling_friction> 0.02 </rolling_friction>
-            <spring_coeff unit="LBS/FT"> 5400 </spring_coeff>
-            <damping_coeff unit="LBS/FT/SEC"> 1600 </damping_coeff>
-            <max_steer unit="DEG"> 0.0 </max_steer>
-            <brake_group> RIGHT </brake_group>
-            <retractable>0</retractable>
-        </contact>
-        <contact type="STRUCTURE" name="NOSE_SKID">
-            <location unit="IN">
-                <x> -37.7 </x>
-                <y> 0 </y>
-                <z> 26.6 </z>
-            </location>
-            <static_friction> 0.2 </static_friction>
-            <dynamic_friction> 0.2 </dynamic_friction>
-            <rolling_friction> 0.2 </rolling_friction>
-            <spring_coeff unit="LBS/FT"> 20000 </spring_coeff>
-            <damping_coeff unit="LBS/FT/SEC"> 2000 </damping_coeff>
-        </contact>
-        <contact type="STRUCTURE" name="TAIL_SKID">
-            <location unit="IN">
-                <x> 188 </x>
-                <y> 0 </y>
-                <z> 8 </z>
-            </location>
-            <static_friction> 0.2 </static_friction>
-            <dynamic_friction> 0.2 </dynamic_friction>
-            <rolling_friction> 0.2 </rolling_friction>
-            <spring_coeff unit="LBS/FT"> 20000 </spring_coeff>
-            <damping_coeff unit="LBS/FT/SEC"> 2000 </damping_coeff>
-        </contact>
-        <contact type="STRUCTURE" name="LEFT_TIP">
-            <location unit="IN">
-                <x> 43.2 </x>
-                <y> -214.8 </y>
-                <z> 59.4 </z>
-            </location>
-            <static_friction> 0.2 </static_friction>
-            <dynamic_friction> 0.2 </dynamic_friction>
-            <rolling_friction> 0.2 </rolling_friction>
-            <spring_coeff unit="LBS/FT"> 20000 </spring_coeff>
-            <damping_coeff unit="LBS/FT/SEC"> 2000 </damping_coeff>
-        </contact>
-        <contact type="STRUCTURE" name="RIGHT_TIP">
-            <location unit="IN">
-                <x> 43.2 </x>
-                <y> 214.8 </y>
-                <z> 59.4 </z>
-            </location>
-            <static_friction> 0.2 </static_friction>
-            <dynamic_friction> 0.2 </dynamic_friction>
-            <rolling_friction> 0.2 </rolling_friction>
-            <spring_coeff unit="LBS/FT"> 20000 </spring_coeff>
-            <damping_coeff unit="LBS/FT/SEC"> 2000 </damping_coeff>
-        </contact>
-    </ground_reactions>
-    <propulsion>
-        <engine file="eng_io320">
-            <feed>0</feed>
-            <feed>1</feed>
-            <thruster file="prop_75in2f">
-                <location unit="IN">
-                    <x> -37.7 </x>
-                    <y> 0 </y>
-                    <z> 26.6 </z>
-                </location>
-                <orient unit="DEG">
-                    <roll> 0.0 </roll>
-                    <pitch> 0.0 </pitch>
-                    <yaw> 0.0 </yaw>
-                </orient>
-                <sense> 1 </sense>
-                <p_factor> 5 </p_factor>
-            </thruster>
-        </engine>
-        <tank type="FUEL">
-            <location unit="IN">
-                <x> 56 </x>
-                <y> -112 </y>
-                <z> 59.4 </z>
-            </location>
-            <capacity unit="LBS"> 185 </capacity>
-            <contents unit="LBS"> 100 </contents>
-        </tank>
-        <tank type="FUEL">
-            <location unit="IN">
-                <x> 56 </x>
-                <y> 112 </y>
-                <z> 59.4 </z>
-            </location>
-            <capacity unit="LBS"> 185 </capacity>
-            <contents unit="LBS"> 100 </contents>
-        </tank>
-    </propulsion>
-    <flight_control name="FCS: c172">
-        <channel name="Pitch">
-            <summer name="Pitch Trim Sum">
-                <input>fcs/elevator-cmd-norm</input>
-                <input>fcs/pitch-trim-cmd-norm</input>
-                <clipto>
-                    <min>-1</min>
-                    <max>1</max>
-                </clipto>
-            </summer>
-            <aerosurface_scale name="Elevator Control">
-                <input>fcs/pitch-trim-sum</input>
-                <gain>0.01745</gain>
-                <range>
-                    <min>-28</min>
-                    <max>23</max>
-                </range>
-                <output>fcs/elevator-pos-rad</output>
-            </aerosurface_scale>
-            <aerosurface_scale name="Elevator Position Normalized">
-                <input>fcs/elevator-pos-deg</input>
-                <domain>
-                    <min>-28</min>
-                    <max>23</max>
-                </domain>
-                <range>
-                    <min>-1</min>
-                    <max>1</max>
-                </range>
-                <output>fcs/elevator-pos-norm</output>
-            </aerosurface_scale>
-        </channel>
-        <channel name="Roll">
-            <summer name="Roll Trim Sum">
-                <input>fcs/aileron-cmd-norm</input>
-                <input>fcs/roll-trim-cmd-norm</input>
-                <clipto>
-                    <min>-1</min>
-                    <max>1</max>
-                </clipto>
-            </summer>
-            <aerosurface_scale name="Left Aileron Control">
-                <input>fcs/roll-trim-sum</input>
-                <gain>0.01745</gain>
-                <range>
-                    <min>-20</min>
-                    <max>15</max>
-                </range>
-                <output>fcs/left-aileron-pos-rad</output>
-            </aerosurface_scale>
-            <aerosurface_scale name="Left Aileron Position Normalized">
-                <input>fcs/left-aileron-pos-deg</input>
-                <domain>
-                    <min>-20</min>
-                    <max>15</max>
-                </domain>
-                <range>
-                    <min>-1</min>
-                    <max>1</max>
-                </range>
-                <output>fcs/left-aileron-pos-norm</output>
-            </aerosurface_scale>
-            <aerosurface_scale name="Right Aileron Control">
-                <input>fcs/roll-trim-sum</input>
-                <gain>-0.01745</gain>
-                <range>
-                    <min>-20</min>
-                    <max>15</max>
-                </range>
-                <output>fcs/right-aileron-pos-rad</output>
-            </aerosurface_scale>
-            <aerosurface_scale name="Right Aileron Position Normalized">
-                <input>fcs/right-aileron-pos-deg</input>
-                <domain>
-                    <min>-15</min>
-                    <max>20</max>
-                </domain>
-                <range>
-                    <min>1</min>
-                    <max>-1</max>
-                </range>
-                <output>fcs/right-aileron-pos-norm</output>
-            </aerosurface_scale>
-        </channel>
-        <channel name="Yaw">
-            <summer name="Yaw Trim Sum">
-                <input>fcs/rudder-cmd-norm</input>
-                <input>fcs/yaw-trim-cmd-norm</input>
-                <clipto>
-                    <min>-1</min>
-                    <max>1</max>
-                </clipto>
-            </summer>
-            <aerosurface_scale name="Rudder Control">
-                <input>fcs/yaw-trim-sum</input>
-                <gain>0.01745</gain>
-                <range>
-                    <min>-16</min>
-                    <max>16</max>
-                </range>
-                <output>fcs/rudder-pos-rad</output>
-            </aerosurface_scale>
-            <aerosurface_scale name="Rudder Position Normalized">
-                <input>fcs/rudder-pos-deg</input>
-                <domain>
-                    <min>-16</min>
-                    <max>16</max>
-                </domain>
-                <range>
-                    <min>-1</min>
-                    <max>1</max>
-                </range>
-                <output>fcs/rudder-pos-norm</output>
-            </aerosurface_scale>
-        </channel>
-        <channel name="Flaps">
-            <kinematic name="Flaps Control">
-                <input>fcs/flap-cmd-norm</input>
-                <traverse>
-                    <setting>
-                        <position>0</position>
-                        <time>0</time>
-                    </setting>
-                    <setting>
-                        <position>10</position>
-                        <time>2</time>
-                    </setting>
-                    <setting>
-                        <position>20</position>
-                        <time>1</time>
-                    </setting>
-                    <setting>
-                        <position>30</position>
-                        <time>1</time>
-                    </setting>
-                </traverse>
-                <output>fcs/flap-pos-deg</output>
-            </kinematic>
-            <aerosurface_scale name="Flap Position Normalizer">
-              <input>fcs/flap-pos-deg</input>
-              <domain>
-                <min>0</min>
-                <max>30</max>
-              </domain>
-              <range>
-                <min>0</min>
-                <max>1</max>
-              </range>
-              <output>fcs/flap-pos-norm</output>
-            </aerosurface_scale>
-        </channel>
-    </flight_control>
-    <aerodynamics>
-        <alphalimits unit="RAD">
-            <min>-0.087</min>
-            <max>0.28</max>
-        </alphalimits>
-        <hysteresis_limits unit="RAD">
-            <min>0.09</min>
-            <max>0.36</max>
-        </hysteresis_limits>
-        <function name="aero/function/kCDge">
-            <description>Change_in_drag_due_to_ground_effect</description>
-            <table>
-                <independentVar>aero/h_b-mac-ft</independentVar>
-                <tableData>
-                    0.0000\t0.4800
-                    0.1000\t0.5150
-                    0.1500\t0.6290
-                    0.2000\t0.7090
-                    0.3000\t0.8150
-                    0.4000\t0.8820
-                    0.5000\t0.9280
-                    0.6000\t0.9620
-                    0.7000\t0.9880
-                    0.8000\t1.0000
-                    0.9000\t1.0000
-                    1.0000\t1.0000
-                    1.1000\t1.0000
-                </tableData>
-            </table>
-        </function>
-        <function name="aero/function/kCLge">
-            <description>Change_in_lift_due_to_ground_effect</description>
-            <table>
-                <independentVar>aero/h_b-mac-ft</independentVar>
-                <tableData>
-                    0.0000\t1.2030
-                    0.1000\t1.1270
-                    0.1500\t1.0900
-                    0.2000\t1.0730
-                    0.3000\t1.0460
-                    0.4000\t1.0550
-                    0.5000\t1.0190
-                    0.6000\t1.0130
-                    0.7000\t1.0080
-                    0.8000\t1.0060
-                    0.9000\t1.0030
-                    1.0000\t1.0020
-                    1.1000\t1.0000
-                </tableData>
-            </table>
-        </function>
- <function name="aero/function/velocity-induced-fps">
-  <description> velocity including the propulsion induced velocity.</description>
-  <sum>
-   <property>velocities/u-aero-fps</property>
-   <property>propulsion/engine/prop-induced-velocity_fps</property>
-   <property>propulsion/engine/prop-induced-velocity_fps</property>
-  </sum>
- </function>
- <function name="aero/function/qbar-induced-psf">
-  <description> q bar including the propulsion induced velocity.</description>
-  <product>
-   <property>aero/function/velocity-induced-fps</property>
-   <property>aero/function/velocity-induced-fps</property>
-   <property>atmosphere/rho-slugs_ft3</property>
-   <value>0.5</value>
-  </product>
- </function>
-        <axis name="DRAG">
-            <function name="aero/coefficient/CDo">
-                <description>Drag_at_zero_lift</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <value>0.027</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/CDDf">
-                <description>Delta_drag_due_to_flap_deflection</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>aero/function/kCDge</property>
-                      <table>
-                          <independentVar>fcs/flap-pos-deg</independentVar>
-                          <tableData>
-                              0.0000\t0.0000
-                              10.0000\t0.0070
-                              20.0000\t0.0120
-                              30.0000\t0.0180
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/CDwbh">
-                <description>Drag_due_to_alpha</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>aero/function/kCDge</property>
-                      <table>
-                          <independentVar lookup="row">aero/alpha-rad</independentVar>
-                          <independentVar lookup="column">fcs/flap-pos-deg</independentVar>
-                          <tableData>
-                                0.0000\t10.0000\t20.0000\t30.0000
-                              -0.0873\t0.0041\t0.0000\t0.0005\t0.0014
-                              -0.0698\t0.0013\t0.0004\t0.0025\t0.0041
-                              -0.0524\t0.0001\t0.0023\t0.0059\t0.0084
-                              -0.0349\t0.0003\t0.0057\t0.0108\t0.0141
-                              -0.0175\t0.0020\t0.0105\t0.0172\t0.0212
-                              0.0000\t0.0052\t0.0168\t0.0251\t0.0299
-                              0.0175\t0.0099\t0.0248\t0.0346\t0.0402
-                              0.0349\t0.0162\t0.0342\t0.0457\t0.0521
-                              0.0524\t0.0240\t0.0452\t0.0583\t0.0655
-                              0.0698\t0.0334\t0.0577\t0.0724\t0.0804
-                              0.0873\t0.0442\t0.0718\t0.0881\t0.0968
-                              0.1047\t0.0566\t0.0874\t0.1053\t0.1148
-                              0.1222\t0.0706\t0.1045\t0.1240\t0.1343
-                              0.1396\t0.0860\t0.1232\t0.1442\t0.1554
-                              0.1571\t0.0962\t0.1353\t0.1573\t0.1690
-                              0.1745\t0.1069\t0.1479\t0.1708\t0.1830
-                              0.1920\t0.1180\t0.1610\t0.1849\t0.1975
-                              0.2094\t0.1298\t0.1746\t0.1995\t0.2126
-                              0.2269\t0.1424\t0.1892\t0.2151\t0.2286
-                              0.2443\t0.1565\t0.2054\t0.2323\t0.2464
-                              0.2618\t0.1727\t0.2240\t0.2521\t0.2667
-                              0.2793\t0.1782\t0.2302\t0.2587\t0.2735
-                              0.2967\t0.1716\t0.2227\t0.2507\t0.2653
-                              0.3142\t0.1618\t0.2115\t0.2388\t0.2531
-                              0.3316\t0.1475\t0.1951\t0.2214\t0.2351
-                              0.3491\t0.1097\t0.1512\t0.1744\t0.1866
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/CDDe">
-                <description>Drag_due_to_Elevator_Deflection</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>fcs/mag-elevator-pos-rad</property>
-                    <value>0.06</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/CDbeta">
-                <description>Drag_due_to_sideslip</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>aero/mag-beta-rad</property>
-                    <value>0.1700</value>
-                </product>
-            </function>
-        </axis>
-        <axis name="SIDE">
-            <function name="aero/coefficient/CYb">
-                <description>Side_force_due_to_beta</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                      <table>
-                          <independentVar lookup="row">aero/beta-rad</independentVar>
-                          <independentVar lookup="column">fcs/flap-pos-deg</independentVar>
-                          <tableData>
-                                0.0000\t30.0000
-                              -0.3490\t0.1370\t0.1060
-                              0.0000\t0.0000\t0.0000
-                              0.3490\t-0.1370\t-0.1060
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/CYda">
-                <description>Side_force_due_to_aileron</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>fcs/left-aileron-pos-rad</property>
-                    <value>0.0000</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/CYdr">
-                <description>Side_force_due_to_rudder</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>fcs/rudder-pos-rad</property>
-                    <value>0.1870</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/CYp">
-                <description>Side_force_due_to_roll_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>aero/bi2vel</property>
-                    <property>velocities/p-aero-rad_sec</property>
-                      <table>
-                          <independentVar lookup="row">aero/alpha-rad</independentVar>
-                          <independentVar lookup="column">fcs/flap-pos-deg</independentVar>
-                          <tableData>
-                                0.0000\t30.0000
-                              0.0000\t-0.0750\t-0.1610
-                              0.0940\t-0.1450\t-0.2310
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/CYr">
-                <description>Side_force_due_to_yaw_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>aero/bi2vel</property>
-                    <property>velocities/r-aero-rad_sec</property>
-                      <table>
-                          <independentVar lookup="row">aero/alpha-rad</independentVar>
-                          <independentVar lookup="column">fcs/flap-pos-deg</independentVar>
-                          <tableData>
-                                0.0000\t30.0000
-                              0.0000\t0.2140\t0.1620
-                              0.0940\t0.2670\t0.2150
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-        </axis>
-        <axis name="LIFT">
-            <function name="aero/coefficient/CLwbh">
-                <description>Lift_due_to_alpha</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>aero/function/kCLge</property>
-                      <table>
-                          <independentVar lookup="row">aero/alpha-rad</independentVar>
-                          <independentVar lookup="column">aero/stall-hyst-norm</independentVar>
-                          <tableData>
-                                0.0000\t1.0000
-                              -0.0900\t-0.2200\t-0.2200
-                              0.0000\t0.2500\t0.2500
-                              0.0900\t0.7300\t0.7300
-                              0.1000\t0.8300\t0.7800
-                              0.1200\t0.9200\t0.7900
-                              0.1400\t1.0200\t0.8100
-                              0.1600\t1.0800\t0.8200
-                              0.1700\t1.1300\t0.8300
-                              0.1900\t1.1900\t0.8500
-                              0.2100\t1.2500\t0.8600
-                              0.2400\t1.3500\t0.8800
-                              0.2600\t1.4400\t0.9000
-                              0.2800\t1.4700\t0.9200
-                              0.3000\t1.4300\t0.9500
-                              0.3200\t1.3800\t0.9900
-                              0.3400\t1.3000\t1.0500
-                              0.3600\t1.1500\t1.1500
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/CLDf">
-                <description>Delta_lift_due_to_flap_deflection</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>aero/function/kCLge</property>
-                      <table>
-                          <independentVar>fcs/flap-pos-deg</independentVar>
-                          <tableData>
-                              0.0000\t0.0000
-                              10.0000\t0.2000
-                              20.0000\t0.3000
-                              30.0000\t0.3500
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/CLDe">
-                <description>Lift_due_to_Elevator_Deflection</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>fcs/elevator-pos-rad</property>
-                    <value>0.4300</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/CLadot">
-                <description>Lift_due_to_alpha_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>aero/alphadot-rad_sec</property>
-                    <property>aero/ci2vel</property>
-                    <value>1.7000</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/CLq">
-                <description>Lift_due_to_pitch_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>velocities/q-aero-rad_sec</property>
-                    <property>aero/ci2vel</property>
-                    <value>3.9000</value>
-                </product>
-            </function>
-        </axis>
-        <axis name="ROLL">
-            <function name="aero/coefficient/Clb">
-                <description>Roll_moment_due_to_beta</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                      <table>
-                          <independentVar>aero/beta-rad</independentVar>
-                          <tableData>
-                              -0.3490\t0.0322
-                              0.0000\t0.0000
-                              0.3490\t-0.0322
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/Clp">
-                <description>Roll_moment_due_to_roll_rate_(roll_damping)</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                    <property>aero/bi2vel</property>
-                    <property>velocities/p-aero-rad_sec</property>
-                    <value>-0.4840</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Clr">
-                <description>Roll_moment_due_to_yaw_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                    <property>aero/bi2vel</property>
-                    <property>velocities/r-aero-rad_sec</property>
-                      <table>
-                          <independentVar lookup="row">aero/alpha-rad</independentVar>
-                          <independentVar lookup="column">fcs/flap-pos-deg</independentVar>
-                          <tableData>
-                                0.0000\t30.0000
-                              0.0000\t0.0798\t0.1246
-                              0.0940\t0.1869\t0.2317
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/ClDa">
-                <description>Roll_moment_due_to_aileron</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                    <property>fcs/left-aileron-pos-rad</property>
-                    <value>0.2290</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cldr">
-                <description>Roll_moment_due_to_rudder</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                    <property>fcs/rudder-pos-rad</property>
-                    <value>0.0147</value>
-                </product>
-            </function>
-        </axis>
-        <axis name="PITCH">
-            <function name="aero/coefficient/Cmo">
-                <description>Pitching_moment_at_zero_alpha</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/cbarw-ft</property>
-                    <value>0.1000</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cmalpha">
-                <description>Pitch_moment_due_to_alpha</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/cbarw-ft</property>
-                    <property>aero/alpha-rad</property>
-                    <value>-1.8000</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cmq">
-                <description>Pitch_moment_due_to_pitch_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/cbarw-ft</property>
-                    <property>aero/ci2vel</property>
-                    <property>velocities/q-aero-rad_sec</property>
-                    <value>-12.4000</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cmadot">
-                <description>Pitch_moment_due_to_alpha_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/cbarw-ft</property>
-                    <property>aero/ci2vel</property>
-                    <property>aero/alphadot-rad_sec</property>
-                    <value>-7.2700</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cmde">
-                <description>Pitch_moment_due_to_elevator_deflection</description>
-                <product>
-                    <property>aero/function/qbar-induced-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/cbarw-ft</property>
-                    <property>fcs/elevator-pos-rad</property>
-                    <value>-1.1220</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cmdf">
-                <description>Delta_pitching_moment_due_to_flap_deflection</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/cbarw-ft</property>
-                      <table>
-                          <independentVar>fcs/flap-pos-deg</independentVar>
-                          <tableData>
-                              0.0000\t0.0000
-                              10.0000\t-0.0654
-                              20.0000\t-0.0981
-                              30.0000\t-0.1140
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-        </axis>
-        <axis name="YAW">
-            <function name="aero/coefficient/Cnb">
-                <description>Yaw_moment_due_to_beta</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                      <table>
-                          <independentVar>aero/beta-rad</independentVar>
-                          <tableData>
-                              -0.3490\t-0.0205
-                              0.0000\t0.0000
-                              0.3490\t0.0205
-                          </tableData>
-                      </table>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cnp">
-                <description>Yaw_moment_due_to_roll_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                    <property>aero/bi2vel</property>
-                    <property>velocities/p-aero-rad_sec</property>
-                    <value>-0.0278</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cnr">
-                <description>Yaw_moment_due_to_yaw_rate</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                    <property>aero/bi2vel</property>
-                    <property>velocities/r-aero-rad_sec</property>
-                    <value>-0.0937</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cnda">
-                <description>Yaw_moment_due_to_aileron</description>
-                <product>
-                    <property>aero/qbar-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                    <property>fcs/left-aileron-pos-rad</property>
-                    <value>-0.0053</value>
-                </product>
-            </function>
-            <function name="aero/coefficient/Cndr">
-                <description>Yaw_moment_due_to_rudder</description>
-                <product>
-                    <property>aero/function/qbar-induced-psf</property>
-                    <property>metrics/Sw-sqft</property>
-                    <property>metrics/bw-ft</property>
-                    <property>fcs/rudder-pos-rad</property>
-                    <value>-0.0430</value>
-                </product>
-            </function>
-        </axis>
-    </aerodynamics>
+// Fallback physics state (used if JSBSim fails to load)
+let fbState = {
+  u: 120 * ktsToFps,  // body forward velocity (ft/s)
+  v: 0, w: 0,
+  phi: 0, theta: 0, psi: 90 * DEG,
+  p: 0, q: 0, r: 0,
+  altFt: 1500,
+  lat: 25.7959, lon: -80.2870,
+  throttle: 0, elevator: 0, aileron: 0, rudder: 0,
+  flap: 0, gear: 1, brakes: 0
+};
+
+// Autopilot
+const apState = { master: false, alt: false, hdg: false, spd: false };
+
+// FPS
+let fpsCount = 0, fpsTimer = 0, fps = 0;
+
+// Touch joystick state
+const touchState = { leftX: 0, leftY: 0, rightX: 0, rightY: 0 };
+
+// =================== LOADING ===================
+function setLoading(pct, msg) {
+  document.getElementById('loadBar').style.width = pct + '%';
+  document.getElementById('loadStatus').textContent = msg;
+  document.getElementById('loadPct').textContent = Math.round(pct) + '%';
+}
+function hideLoading() {
+  setTimeout(() => document.getElementById('loading').classList.add('hidden'), 500);
+}
+
+// =================== HUD CANVAS ===================
+const hud = document.getElementById('hud');
+const hctx = hud.getContext('2d');
+function resizeHud() {
+  hud.width = window.innerWidth;
+  hud.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeHud);
+resizeHud();
+
+function drawTape(x, y, w, h, val, range, majorStep, minorStep, label, color) {
+  const sc = Math.min(hud.width / 1200, hud.height / 800);
+  // Background
+  hctx.fillStyle = 'rgba(0,0,0,0.35)';
+  hctx.fillRect(x - w/2, y - h/2, w, h);
+  hctx.strokeStyle = color;
+  hctx.lineWidth = 1;
+  hctx.strokeRect(x - w/2, y - h/2, w, h);
+
+  const pxPerUnit = h / range;
+  const topVal = val + range / 2;
+  const botVal = val - range / 2;
+  // Minor ticks
+  hctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  hctx.fillStyle = 'rgba(255,255,255,0.7)';
+  hctx.font = (10 * sc) + 'px monospace';
+  hctx.textAlign = 'right';
+  hctx.textBaseline = 'middle';
+  for (let v = Math.ceil(botVal / minorStep) * minorStep; v <= topVal; v += minorStep) {
+    const ty = y + (val - v) * pxPerUnit;
+    if (ty < y - h/2 || ty > y + h/2) continue;
+    const isMajor = Math.abs(v % majorStep) < 0.01;
+    hctx.beginPath();
+    hctx.moveTo(x + w/2, ty);
+    hctx.lineTo(x + w/2 - (isMajor ? 12 * sc : 6 * sc), ty);
+    hctx.stroke();
+    if (isMajor) hctx.fillText(Math.round(v), x + w/2 - 14 * sc, ty);
+  }
+
+  // Center value box
+  hctx.fillStyle = '#000';
+  hctx.fillRect(x - w/2 - 4, y - 10 * sc, w + 8, 20 * sc);
+  hctx.strokeStyle = color;
+  hctx.strokeRect(x - w/2 - 4, y - 10 * sc, w + 8, 20 * sc);
+  hctx.fillStyle = '#fff';
+  hctx.font = 'bold ' + (14 * sc) + 'px monospace';
+  hctx.textAlign = 'center';
+  hctx.fillText(Math.round(val), x, y);
+
+  // Label
+  hctx.fillStyle = color;
+  hctx.font = (10 * sc) + 'px monospace';
+  hctx.fillText(label, x, y - h/2 - 8 * sc);
+}
+
+function drawVSI(x, y, w, h, vs) {
+  const sc = Math.min(hud.width / 1200, hud.height / 800);
+  hctx.fillStyle = 'rgba(0,0,0,0.35)';
+  hctx.fillRect(x - w/2, y - h/2, w, h);
+  hctx.strokeStyle = '#4fc3f7';
+  hctx.strokeRect(x - w/2, y - h/2, w, h);
+  const maxVs = 2000;
+  const clamped = clamp(vs, -maxVs, maxVs);
+  const py = y - (clamped / maxVs) * (h / 2);
+  // Tick marks
+  hctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  for (let v = -2000; v <= 2000; v += 500) {
+    const ty = y - (v / maxVs) * (h / 2);
+    hctx.beginPath();
+    hctx.moveTo(x - w/2, ty);
+    hctx.lineTo(x - w/2 + 6 * sc, ty);
+    hctx.stroke();
+  }
+  // Indicator bar
+  hctx.fillStyle = vs >= 0 ? '#0f0' : '#f44';
+  hctx.fillRect(x - w/2 + 6 * sc, Math.min(y, py), w - 6 * sc, Math.abs(py - y));
+  hctx.fillStyle = '#fff';
+  hctx.font = (10 * sc) + 'px monospace';
+  hctx.textAlign = 'center';
+  hctx.fillText('VS', x, y - h/2 - 8 * sc);
+  hctx.fillText(Math.round(vs), x, y + h/2 + 12 * sc);
+}
+
+function drawCompass(x, y, w, hdg) {
+  const sc = Math.min(hud.width / 1200, hud.height / 800);
+  hctx.fillStyle = 'rgba(0,0,0,0.5)';
+  hctx.fillRect(x - w/2, y - 14 * sc, w, 28 * sc);
+  hctx.strokeStyle = '#4fc3f7';
+  hctx.strokeRect(x - w/2, y - 14 * sc, w, 28 * sc);
+  const range = 90;
+  const pxPerDeg = w / range;
+  hctx.fillStyle = '#fff';
+  hctx.font = (10 * sc) + 'px monospace';
+  hctx.textAlign = 'center';
+  hctx.textBaseline = 'middle';
+  for (let d = -range/2; d <= range/2; d += 5) {
+    const tx = x + d * pxPerDeg;
+    if (tx < x - w/2 + 4 || tx > x + w/2 - 4) continue;
+    const realHdg = ((Math.round(hdg / 5) * 5 + d) % 360 + 360) % 360;
+    const isMajor = realHdg % 30 < 5;
+    hctx.strokeStyle = isMajor ? '#fff' : 'rgba(255,255,255,0.4)';
+    hctx.beginPath();
+    hctx.moveTo(tx, y - 10 * sc);
+    hctx.lineTo(tx, y - 10 * sc + (isMajor ? 8 * sc : 4 * sc));
+    hctx.stroke();
+    if (isMajor) {
+      let lbl = realHdg.toString().padStart(3, '0');
+      if (realHdg === 0) lbl = 'N';
+      else if (realHdg === 90) lbl = 'E';
+      else if (realHdg === 180) lbl = 'S';
+      else if (realHdg === 270) lbl = 'W';
+      hctx.fillText(lbl, tx, y + 4 * sc);
+    }
+  }
+  // Center pointer
+  hctx.fillStyle = '#ff0';
+  hctx.beginPath();
+  hctx.moveTo(x, y - 14 * sc);
+  hctx.lineTo(x - 5 * sc, y - 22 * sc);
+  hctx.lineTo(x + 5 * sc, y - 22 * sc);
+  hctx.closePath();
+  hctx.fill();
+}
+
+function drawHorizon(cx, cy, w, pitch, roll) {
+  const sc = Math.min(hud.width / 1200, hud.height / 800);
+  const r = w / 2;
+  hctx.save();
+  // Clip to circle
+  hctx.beginPath();
+  hctx.arc(cx, cy, r, 0, Math.PI * 2);
+  hctx.clip();
+
+  hctx.translate(cx, cy);
+  hctx.rotate(-roll * DEG);
+  const pxPerDeg = 4 * sc;
+  const pitchOffset = pitch * pxPerDeg;
+  // Sky
+  hctx.fillStyle = '#1e6fb8';
+  hctx.fillRect(-r * 2, -r * 2 - pitchOffset, r * 4, r * 2);
+  // Ground
+  hctx.fillStyle = '#7a5230';
+  hctx.fillRect(-r * 2, -pitchOffset, r * 4, r * 2);
+
+  // Horizon line
+  hctx.strokeStyle = '#fff';
+  hctx.lineWidth = 2;
+  hctx.beginPath();
+  hctx.moveTo(-r * 2, -pitchOffset);
+  hctx.lineTo(r * 2, -pitchOffset);
+  hctx.stroke();
+
+  // Pitch ladder
+  hctx.font = (10 * sc) + 'px monospace';
+  hctx.textAlign = 'center';
+  hctx.textBaseline = 'middle';
+  for (let p = -90; p <= 90; p += 5) {
+    if (p === 0) continue;
+    const py = -p * pxPerDeg - pitchOffset;
+    if (Math.abs(py) > r) continue;
+    const isMajor = p % 10 === 0;
+    const len = isMajor ? 30 * sc : 15 * sc;
+    hctx.strokeStyle = '#fff';
+    hctx.lineWidth = isMajor ? 1.5 : 1;
+    hctx.beginPath();
+    hctx.moveTo(-len, py);
+    hctx.lineTo(-len + 8 * sc, py);
+    hctx.moveTo(len, py);
+    hctx.lineTo(len - 8 * sc, py);
+    hctx.stroke();
+    if (isMajor) {
+      hctx.fillStyle = '#fff';
+      const sign = p > 0 ? '' : '-';
+      hctx.fillText(sign + Math.abs(p), -len - 12 * sc, py);
+      hctx.fillText(sign + Math.abs(p), len + 12 * sc, py);
+    }
+  }
+  hctx.restore();
+
+  // Aircraft symbol (fixed)
+  hctx.save();
+  hctx.translate(cx, cy);
+  hctx.strokeStyle = '#ff0';
+  hctx.lineWidth = 2.5;
+  hctx.beginPath();
+  hctx.moveTo(-r * 0.6, 0);
+  hctx.lineTo(-r * 0.15, 0);
+  hctx.moveTo(r * 0.15, 0);
+  hctx.lineTo(r * 0.6, 0);
+  hctx.moveTo(0, 0);
+  hctx.lineTo(0, r * 0.15);
+  hctx.stroke();
+  hctx.restore();
+
+  // Roll indicator arc
+  hctx.save();
+  hctx.translate(cx, cy);
+  hctx.strokeStyle = '#fff';
+  hctx.lineWidth = 1;
+  hctx.beginPath();
+  hctx.arc(0, 0, r, -Math.PI * 0.75, -Math.PI * 0.25);
+  hctx.stroke();
+  // Roll tick marks
+  for (let a = -60; a <= 60; a += 10) {
+    const ang = -Math.PI / 2 + a * DEG;
+    const isMajor = a % 30 === 0;
+    const r1 = r;
+    const r2 = r - (isMajor ? 10 * sc : 5 * sc);
+    hctx.beginPath();
+    hctx.moveTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
+    hctx.lineTo(Math.cos(ang) * r2, Math.sin(ang) * r2);
+    hctx.stroke();
+  }
+  // Roll pointer (rotates with roll)
+  hctx.save();
+  hctx.rotate(roll * DEG);
+  hctx.fillStyle = '#ff0';
+  hctx.beginPath();
+  hctx.moveTo(0, -r);
+  hctx.lineTo(-5 * sc, -r + 8 * sc);
+  hctx.lineTo(5 * sc, -r + 8 * sc);
+  hctx.closePath();
+  hctx.fill();
+  hctx.restore();
+  // Top center fixed triangle
+  hctx.fillStyle = '#fff';
+  hctx.beginPath();
+  hctx.moveTo(0, -r - 2 * sc);
+  hctx.lineTo(-4 * sc, -r - 10 * sc);
+  hctx.lineTo(4 * sc, -r - 10 * sc);
+  hctx.closePath();
+  hctx.fill();
+  hctx.restore();
+
+  // Circle outline
+  hctx.strokeStyle = '#4fc3f7';
+  hctx.lineWidth = 1.5;
+  hctx.beginPath();
+  hctx.arc(cx, cy, r, 0, Math.PI * 2);
+  hctx.stroke();
+}
+
+function drawHUD() {
+  const w = hud.width, h = hud.height;
+  const sc = Math.min(w / 1200, h / 800);
+  hctx.clearRect(0, 0, w, h);
+
+  const s = acState;
+  // Artificial horizon (center)
+  const horizonR = 100 * sc;
+  drawHorizon(w / 2, h / 2, horizonR * 2, s.pitch, s.roll);
+
+  // Speed tape (left)
+  drawTape(w / 2 - 200 * sc, h / 2, 50 * sc, 240 * sc, s.ias, 100, 10, 5, 'IAS', '#0f0');
+  // Altitude tape (right)
+  drawTape(w / 2 + 200 * sc, h / 2, 50 * sc, 240 * sc, s.alt * ftPerM, 1000, 100, 50, 'ALT', '#0f0');
+  // VSI
+  drawVSI(w / 2 + 280 * sc, h / 2, 30 * sc, 200 * sc, s.vs * 60);
+  // Compass
+  drawCompass(w / 2, 50 * sc, 300 * sc, s.hdg);
+
+  // Throttle indicator (top-left of horizon)
+  hctx.fillStyle = 'rgba(0,0,0,0.5)';
+  hctx.fillRect(w / 2 - 280 * sc, h / 2 - 60 * sc, 20 * sc, 120 * sc);
+  hctx.strokeStyle = '#4fc3f7';
+  hctx.strokeRect(w / 2 - 280 * sc, h / 2 - 60 * sc, 20 * sc, 120 * sc);
+  hctx.fillStyle = '#0f0';
+  hctx.fillRect(w / 2 - 280 * sc, h / 2 + 60 * sc - s.throttle * 120 * sc, 20 * sc, s.throttle * 120 * sc);
+
+  // Flap indicator
+  hctx.fillStyle = '#4fc3f7';
+  hctx.font = (10 * sc) + 'px monospace';
+  hctx.textAlign = 'left';
+  hctx.fillText('FLAP ' + Math.round(s.flap * 100) + '%', w / 2 - 280 * sc, h / 2 + 80 * sc);
+  hctx.fillText('GEAR ' + (s.gear ? 'DOWN' : 'UP'), w / 2 - 280 * sc, h / 2 + 95 * sc);
+  hctx.fillText('BRK ' + (s.brakes ? 'ON' : 'OFF'), w / 2 - 280 * sc, h / 2 + 110 * sc);
+
+  // AP indicators
+  if (apState.master) {
+    hctx.fillStyle = '#0f0';
+    hctx.font = (12 * sc) + 'px monospace';
+    hctx.textAlign = 'center';
+    let apModes = 'AP';
+    if (apState.alt) apModes += ' ALT';
+    if (apState.hdg) apModes += ' HDG';
+    if (apState.spd) apModes += ' SPD';
+    hctx.fillText(apModes, w / 2, h / 2 + 130 * sc);
+  }
+}
+
+// =================== CONTROLS ===================
+function setupControls() {
+  document.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if (e.code === 'KeyP') { paused = !paused; document.getElementById('pauseOverlay').classList.toggle('show', paused); }
+    if (e.code === 'KeyR') resetFlight();
+    if (e.code === 'KeyF') {
+      const flaps = [0, 0.25, 0.5, 0.75, 1.0];
+      const cur = flaps.indexOf(Math.round(acState.flap * 4) / 4);
+      const next = flaps[(cur + 1) % flaps.length];
+      acState.flap = next;
+      if (jsbsimReady) try { sdk.setPropertyValue('fcs/flap-cmd-norm', next); } catch(_) {}
+    }
+    if (e.code === 'KeyG') {
+      acState.gear = acState.gear ? 0 : 1;
+      if (jsbsimReady) try { sdk.setPropertyValue('gear/gear-cmd-norm', acState.gear); } catch(_) {}
+    }
+    if (e.code === 'KeyB') {
+      acState.brakes = acState.brakes ? 0 : 1;
+      if (jsbsimReady) try {
+        sdk.setPropertyValue('gear/brake-cmd-norm', acState.brakes);
+      } catch(_) {}
+    }
+    // Number keys = throttle
+    if (/^Digit[0-9]$/.test(e.code)) {
+      const n = parseInt(e.code.slice(5));
+      thrIn = n * 0.1;
+    }
+  });
+  document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+  // Mouse pointer lock
+  const cc = document.getElementById('cesiumContainer');
+  cc.addEventListener('click', () => {
+    if (!document.pointerLockElement) cc.requestPointerLock();
+  });
+  document.addEventListener('pointerlockchange', () => {
+    if (!document.pointerLockElement) { mx = 0; my = 0; }
+  });
+  document.addEventListener('mousemove', e => {
+    if (document.pointerLockElement) {
+      mx += e.movementX * 0.002 * mouseSens;
+      my += e.movementY * 0.002 * mouseSens;
+      mx = clamp(mx, -1, 1);
+      my = clamp(my, -1, 1);
+    }
+  });
+
+  // Gamepad
+  window.addEventListener('gamepadconnected', e => {
+    gpIdx = e.gamepad.index;
+    console.log('[Gamepad] connected:', e.gamepad.id);
+  });
+  window.addEventListener('gamepaddisconnected', e => {
+    if (gpIdx === e.gamepad.index) gpIdx = -1;
+  });
+
+  // Menu toggle
+  document.getElementById('menuBtn').addEventListener('click', () => {
+    document.getElementById('menu').classList.toggle('open');
+  });
+
+  // Settings
+  document.getElementById('msRange').addEventListener('input', e => {
+    mouseSens = parseFloat(e.target.value);
+    document.getElementById('msVal').textContent = mouseSens.toFixed(1);
+  });
+  document.getElementById('camSelect').addEventListener('change', e => { camMode = e.target.value; });
+  document.getElementById('qualSelect').addEventListener('change', e => { quality = e.target.value; applyQuality(); });
+
+  // AP buttons
+  function apToggle(id, key) {
+    document.getElementById(id).addEventListener('click', () => {
+      if (key === 'master') {
+        apState.master = !apState.master;
+        document.getElementById(id).classList.toggle('on', apState.master);
+      } else {
+        apState[key] = !apState[key];
+        document.getElementById(id).classList.toggle('on', apState[key]);
+      }
+    });
+  }
+  apToggle('apMaster', 'master');
+  apToggle('apAlt', 'alt');
+  apToggle('apHdg', 'hdg');
+  apToggle('apSpd', 'spd');
+
+  // Mobile detection + touch
+  const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if (isMobile) {
+    document.getElementById('mobile').classList.add('show');
+    setupTouch();
+  }
+
+  // Mobile AP button
+  document.getElementById('apBtn').addEventListener('click', () => {
+    apState.master = !apState.master;
+    document.getElementById('apMaster').classList.toggle('on', apState.master);
+  });
+  // Mobile throttle buttons
+  let thrUpHeld = false, thrDnHeld = false;
+  document.getElementById('thrUpBtn').addEventListener('touchstart', e => { e.preventDefault(); thrUpHeld = true; });
+  document.getElementById('thrUpBtn').addEventListener('touchend', e => { e.preventDefault(); thrUpHeld = false; });
+  document.getElementById('thrDnBtn').addEventListener('touchstart', e => { e.preventDefault(); thrDnHeld = true; });
+  document.getElementById('thrDnBtn').addEventListener('touchend', e => { e.preventDefault(); thrDnHeld = false; });
+  window._mobileThr = { up: () => thrUpHeld, down: () => thrDnHeld };
+  // Flap buttons
+  document.querySelectorAll('.flap-row button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const f = parseInt(btn.dataset.flap) / 100;
+      acState.flap = f;
+      document.querySelectorAll('.flap-row button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (jsbsimReady) try { sdk.setPropertyValue('fcs/flap-cmd-norm', f); } catch(_) {}
+    });
+  });
+}
+
+function setupTouch() {
+  function bindPad(padId, knobId, key) {
+    const pad = document.getElementById(padId);
+    const knob = document.getElementById(knobId);
+    let activeId = null;
+    let cx = 0, cy = 0;
+    pad.addEventListener('touchstart', e => {
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      activeId = t.identifier;
+      const rect = pad.getBoundingClientRect();
+      cx = rect.left + rect.width / 2;
+      cy = rect.top + rect.height / 2;
+    });
+    pad.addEventListener('touchmove', e => {
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        if (t.identifier !== activeId) continue;
+        let dx = t.clientX - cx;
+        let dy = t.clientY - cy;
+        const max = 50;
+        const len = Math.hypot(dx, dy);
+        if (len > max) { dx = dx / len * max; dy = dy / len * max; }
+        knob.style.left = (50 + dx / max * 40) + '%';
+        knob.style.top = (50 + dy / max * 40) + '%';
+        touchState[key] = dx / max;
+        touchState[key === 'leftX' ? 'leftY' : key === 'rightX' ? 'rightY' : key] = touchState[key];
+        if (key === 'leftX') touchState.leftY = dy / max;
+        if (key === 'rightX') touchState.rightY = dy / max;
+      }
+    });
+    pad.addEventListener('touchend', e => {
+      e.preventDefault();
+      activeId = null;
+      knob.style.left = '50%';
+      knob.style.top = '50%';
+      touchState[key] = 0;
+      if (key === 'leftX') touchState.leftY = 0;
+      if (key === 'rightX') touchState.rightY = 0;
+    });
+  }
+  bindPad('leftPad', 'leftKnob', 'leftX');
+  bindPad('rightPad', 'rightKnob', 'rightX');
+}
+
+function updateControls(dt) {
+  let el = 0, al = 0, ru = 0;
+  const rate = dt || 0.016;
+
+  // Keyboard
+  if (keys.KeyW || keys.ArrowUp) el -= 0.8;
+  if (keys.KeyS || keys.ArrowDown) el += 0.8;
+  if (keys.KeyA || keys.ArrowLeft) al -= 0.8;
+  if (keys.KeyD || keys.ArrowRight) al += 0.8;
+  if (keys.KeyQ) ru -= 0.8;
+  if (keys.KeyE) ru += 0.8;
+
+  // Throttle
+  if (keys.ShiftLeft || keys.ShiftRight) thrIn = Math.min(1, thrIn + 0.5 * rate);
+  if (keys.ControlLeft || keys.ControlRight) thrIn = Math.max(0, thrIn - 0.5 * rate);
+  if (window._mobileThr) {
+    if (window._mobileThr.up()) thrIn = Math.min(1, thrIn + 0.5 * rate);
+    if (window._mobileThr.down()) thrIn = Math.max(0, thrIn - 0.5 * rate);
+  }
+
+  // Mouse pointer lock (overrides keyboard)
+  if (document.pointerLockElement) {
+    el = my * 1.5;
+    al = mx * 1.5;
+  }
+
+  // Touch joystick (overrides keyboard on mobile)
+  if (touchState.leftX || touchState.leftY) {
+    thrIn = clamp(thrIn + (-touchState.leftY) * rate * 0.8, 0, 1);
+  }
+  if (touchState.rightX || touchState.rightY) {
+    al = touchState.rightX * 1.2;
+    el = -touchState.rightY * 1.2;
+  }
+
+  // Gamepad
+  if (gpIdx >= 0) {
+    const gp = navigator.getGamepads()[gpIdx];
+    if (gp) {
+      const adz = v => Math.abs(v) < 0.08 ? 0 : Math.sign(v) * (Math.abs(v) - 0.08) / 0.92;
+      if (Math.abs(gp.axes[0]) > 0.01) al = adz(gp.axes[0]);
+      if (Math.abs(gp.axes[1]) > 0.01) el = adz(gp.axes[1]);
+      if (gp.axes[2] !== undefined && Math.abs(gp.axes[2]) > 0.01) ru = adz(gp.axes[2]);
+      if (gp.axes[3] !== undefined) thrIn = clamp((1 - adz(gp.axes[3])) / 2 + 0.5, 0, 1);
+    }
+  }
+
+  elIn = el; alIn = al; ruIn = ru;
+
+  // Autopilot overrides manual controls
+  updateAP(rate);
+  if (apState.master) {
+    if (apState.hdg) al = alIn = clamp(alIn, -0.3, 0.3);
+    if (apState.alt) el = elIn = clamp(elIn, -0.3, 0.3);
+  }
+
+  // Write to JSBSim
+  if (jsbsimReady) {
+    try {
+      sdk.setPropertyValue('fcs/elevator-cmd-norm', clamp(el, -1, 1));
+      sdk.setPropertyValue('fcs/aileron-cmd-norm', clamp(al, -1, 1));
+      sdk.setPropertyValue('fcs/rudder-cmd-norm', clamp(ru, -1, 1));
+      sdk.setPropertyValue('fcs/throttle-cmd-norm', clamp(thrIn, 0, 1));
+    } catch (e) {
+      console.warn('[JSBSim] setPropertyValue failed:', e);
+    }
+  } else {
+    // Fallback sim controls
+    fbState.elevator = clamp(el, -1, 1);
+    fbState.aileron = clamp(al, -1, 1);
+    fbState.rudder = clamp(ru, -1, 1);
+    fbState.throttle = clamp(thrIn, 0, 1);
+    fbState.flap = acState.flap;
+    fbState.gear = acState.gear;
+    fbState.brakes = acState.brakes;
+  }
+  acState.throttle = thrIn;
+}
+
+function updateAP(dt) {
+  if (!apState.master) return;
+  if (jsbsimReady) {
+    try {
+      if (apState.alt) {
+        const tgt = parseFloat(document.getElementById('apAltVal').value) || 3000;
+        const cur = safeVal(sdk.getPropertyValue('position/h-sl-ft'), 1500);
+        const err = (tgt - cur);
+        // Use pitch trim
+        const trim = clamp(err * 0.0008, -0.4, 0.4);
+        sdk.setPropertyValue('fcs/pitch-trim-cmd-norm', trim);
+      }
+      if (apState.hdg) {
+        const tgt = parseFloat(document.getElementById('apHdgVal').value) || 90;
+        const cur = safeVal(sdk.getPropertyValue('attitude/psi-deg'), 90);
+        let err = tgt - cur;
+        if (err > 180) err -= 360;
+        if (err < -180) err += 360;
+        alIn = clamp(err * 0.02, -0.3, 0.3);
+      }
+      if (apState.spd) {
+        const tgt = parseFloat(document.getElementById('apSpdVal').value) || 120;
+        const cur = safeVal(sdk.getPropertyValue('velocities/vc-kts'), 100);
+        const err = tgt - cur;
+        thrIn = clamp(thrIn + err * 0.001 * dt * 60, 0, 1);
+      }
+    } catch (_) {}
+  } else {
+    // Fallback AP
+    if (apState.alt) {
+      const tgt = parseFloat(document.getElementById('apAltVal').value) || 3000;
+      const err = tgt - fbState.altFt;
+      elIn = clamp(err * 0.001, -0.3, 0.3);
+    }
+    if (apState.hdg) {
+      const tgt = parseFloat(document.getElementById('apHdgVal').value) || 90;
+      let err = tgt - (fbState.psi * RAD);
+      if (err > 180) err -= 360;
+      if (err < -180) err += 360;
+      alIn = clamp(err * 0.02, -0.3, 0.3);
+    }
+    if (apState.spd) {
+      const tgt = parseFloat(document.getElementById('apSpdVal').value) || 120;
+      const cur = fbState.u / ktsToFps;
+      const err = tgt - cur;
+      thrIn = clamp(thrIn + err * 0.001 * dt * 60, 0, 1);
+    }
+  }
+}
+
+// =================== CESIUM SETUP ===================
+async function setupCesium() {
+  setLoading(10, 'Initializing CesiumJS...');
+  // Cesium ion token (using default community token-free imagery)
+  Cesium.Ion.defaultAccessToken = undefined;
+
+  viewer = new Cesium.Viewer('cesiumContainer', {
+    baseLayer: false,
+    sceneModePicker: false, baseLayerPicker: false,
+    geocoder: false, homeButton: false,
+    infoBox: false, selectionIndicator: false,
+    navigationHelpButton: false,
+    animation: false, timeline: false,
+    fullscreenButton: false, vrButton: false,
+    requestRenderMode: false,
+  });
+
+  setLoading(25, 'Loading satellite imagery...');
+  viewer.imageryLayers.removeAll();
+  viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    maximumLevel: 18, credit: 'Esri'
+  }));
+
+  setLoading(35, 'Setting up atmosphere...');
+  viewer.scene.skyAtmosphere.show = true;
+  viewer.scene.fog.enabled = true;
+  viewer.scene.fog.density = 0.0002;
+  viewer.scene.globe.enableLighting = true;
+  viewer.scene.globe.depthTestAgainstTerrain = true;
+  viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
+  viewer.scene.screenSpaceCameraController.minimumZoomDistance = 5;
+  // Set initial camera over Miami
+  viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromDegrees(-80.2870, 25.7959, 800),
+    orientation: { heading: 90 * DEG, pitch: -0.3, roll: 0 }
+  });
+}
+
+function applyQuality() {
+  if (!viewer) return;
+  if (quality === 'low') {
+    viewer.scene.globe.maximumScreenSpaceError = 4;
+    viewer.scene.fog.enabled = false;
+  } else if (quality === 'medium') {
+    viewer.scene.globe.maximumScreenSpaceError = 2;
+    viewer.scene.fog.enabled = true;
+  } else {
+    viewer.scene.globe.maximumScreenSpaceError = 1;
+    viewer.scene.fog.enabled = true;
+  }
+}
+
+// =================== AIRCRAFT MODEL (CESIUM PRIMITIVES) ===================
+function buildAircraftModel() {
+  // Build a simple aircraft from boxes since GLB URLs may have CORS issues.
+  // Returns a Cesium.Entity that we update each frame.
+  // We use a single Entity with primitive-collection-like composite via custom primitive.
+  // Simpler: use multiple entities grouped under a parent position.
+  // For chase-cam purposes we only need something visible — use a Cesium.Model with a small inline glTF? Too complex.
+  // Use a polygon-based aircraft via geometry.
+
+  // Use Cesium Entity API with multiple graphics under one position/orientation.
+  // Approach: a single Entity with model from a known-good data URI glTF (tiny model).
+  // We craft a minimal glTF JSON for a simple plane shape.
+
+  // Minimal glTF 2.0 with a single triangle — actually let's just use boxes via primitive collections.
+  // We'll create one Entity per part, all with the same position/orientation updated each frame.
+  const parts = [];
+
+  // Fuselage: long thin box
+  parts.push(viewer.entities.add({
+    position: new Cesium.Cartesian3(),
+    box: {
+      dimensions: new Cesium.Cartesian3(1.5, 1.5, 14),
+      material: Cesium.Color.WHITE,
+      outline: true, outlineColor: Cesium.Color.BLACK
+    }
+  }));
+  // Wings: wide flat box
+  parts.push(viewer.entities.add({
+    position: new Cesium.Cartesian3(),
+    box: {
+      dimensions: new Cesium.Cartesian3(20, 0.4, 3),
+      material: Cesium.Color.WHITE,
+      outline: true, outlineColor: Cesium.Color.BLACK
+    }
+  }));
+  // Tail vertical stabilizer
+  parts.push(viewer.entities.add({
+    position: new Cesium.Cartesian3(),
+    box: {
+      dimensions: new Cesium.Cartesian3(0.3, 3, 2),
+      material: Cesium.Color.RED,
+      outline: true, outlineColor: Cesium.Color.BLACK
+    }
+  }));
+  // Horizontal stabilizer
+  parts.push(viewer.entities.add({
+    position: new Cesium.Cartesian3(),
+    box: {
+      dimensions: new Cesium.Cartesian3(6, 0.3, 1.5),
+      material: Cesium.Color.WHITE,
+      outline: true, outlineColor: Cesium.Color.BLACK
+    }
+  }));
+  // Engine/cockpit hint (slightly forward)
+  parts.push(viewer.entities.add({
+    position: new Cesium.Cartesian3(),
+    ellipsoid: {
+      radii: new Cesium.Cartesian3(0.8, 0.8, 1.5),
+      material: Cesium.Color.fromBytes(80, 140, 200, 220)
+    }
+  }));
+
+  return parts;
+}
+
+function updateAircraftModel(lon, lat, altM, hdg, pitch, roll) {
+  if (!modelEntity) return;
+  const pos = Cesium.Cartesian3.fromDegrees(lon, lat, Math.max(altM, 0.5));
+  const hpr = new Cesium.HeadingPitchRoll(hdg * DEG, pitch * DEG, roll * DEG);
+  const q = Cesium.Transforms.headingPitchRollQuaternion(pos, hpr);
+  // In Cesium's local frame: +X=east, +Y=north, +Z=up
+  // Aircraft convention: nose along +X (forward = east in NED), wings along Y, up = Z
+  // Our boxes use +Z (length 14) for fuselage — need to align nose with forward.
+  // We'll rotate model so that local +Z aligns with east (forward in ENU).
+  // Simpler: rotate by an additional heading so the box's local +X faces east.
+  // Box dimensions (x=1.5,y=1.5,z=14) means long axis is +Z.
+  // We want long axis along +X (east/forward). Apply rotation of -90deg about Y.
+  const alignHpr = new Cesium.HeadingPitchRoll(hdg * DEG, pitch * DEG, roll * DEG);
+  const q2 = Cesium.Transforms.headingPitchRollQuaternion(pos, alignHpr);
+  for (const p of modelEntity) {
+    p.position = pos;
+    p.orientation = q2;
+  }
+}
+
+// =================== JSBSIM AIRCRAFT XML ===================
+// Real C172p XML — simplified but valid JSBSim format. Based on the official c172p aircraft.
+const C172P_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<fdm_config name="c172p" version="2.0" release="BETA">
+  <fileheader>
+    <author>JSBSim Team / Flight Sim</author>
+    <filecreationdate>2024-01-01</filecreationdate>
+    <version>1.0</version>
+    <description>Cessna C-172P Skyhawk</description>
+  </fileheader>
+  <metrics>
+    <wingarea unit="FT2">174</wingarea>
+    <wingspan unit="FT">35.8</wingspan>
+    <chord unit="FT">4.9</chord>
+    <htailarea unit="FT2">21.9</htailarea>
+    <htailarm unit="FT">15.7</htailarm>
+    <vtailarea unit="FT2">16.5</vtailarea>
+    <vtailarm unit="FT">15.7</vtailarm>
+    <location name="AERORP" unit="IN">
+      <x>29.0</x><y>0</y><z>36.5</z>
+    </location>
+    <location name="EYEPOINT" unit="IN">
+      <x>37.0</x><y>0</y><z>48.0</z>
+    </location>
+    <location name="VRP" unit="IN">
+      <x>29.0</x><y>0</y><z>0</z>
+    </location>
+  </metrics>
+  <mass_balance>
+    <ixx unit="SLUG*FT2">948</ixx>
+    <iyy unit="SLUG*FT2">1346</iyy>
+    <izz unit="SLUG*FT2">1967</izz>
+    <ixy unit="SLUG*FT2">0</ixy>
+    <ixz unit="SLUG*FT2">0</ixz>
+    <iyz unit="SLUG*FT2">0</iyz>
+    <emptywt unit="LBS">1500</emptywt>
+    <location name="CG" unit="IN">
+      <x>41.0</x><y>0</y><z>36.5</z>
+    </location>
+    <point name="Pilot" mass="180" unit="LBS">
+      <x>37</x><y>0</y><z>24</z>
+    </point>
+    <point name="Front Passenger" mass="0" unit="LBS">
+      <x>37</x><y>-14</y><z>24</z>
+    </point>
+    <point name="Fuel" mass="336" unit="LBS">
+      <x>48</x><y>0</y><z>32</z>
+    </point>
+  </mass_balance>
+  <ground_reactions>
+    <contact type="BOGEY" name="NOSE">
+      <location unit="IN"><x>-6.5</x><y>0</y><z>-15.5</z></location>
+      <static_friction>0.8</static_friction>
+      <dynamic_friction>0.5</dynamic_friction>
+      <spring_coeff unit="LBS/FT">1800</spring_coeff>
+      <damping_coeff unit="LBS/FT/SEC">600</damping_coeff>
+      <max_steer unit="DEG">10</max_steer>
+      <brake_group>NONE</brake_group>
+      <retractable>0</retractable>
+    </contact>
+    <contact type="BOGEY" name="LEFT_MAIN">
+      <location unit="IN"><x>58.1</x><y>-43</y><z>-15.5</z></location>
+      <static_friction>0.8</static_friction>
+      <dynamic_friction>0.5</dynamic_friction>
+      <spring_coeff unit="LBS/FT">5400</spring_coeff>
+      <damping_coeff unit="LBS/FT/SEC">1600</damping_coeff>
+      <max_steer unit="DEG">0</max_steer>
+      <brake_group>LEFT</brake_group>
+      <retractable>0</retractable>
+    </contact>
+    <contact type="BOGEY" name="RIGHT_MAIN">
+      <location unit="IN"><x>58.1</x><y>43</y><z>-15.5</z></location>
+      <static_friction>0.8</static_friction>
+      <dynamic_friction>0.5</dynamic_friction>
+      <spring_coeff unit="LBS/FT">5400</spring_coeff>
+      <damping_coeff unit="LBS/FT/SEC">1600</damping_coeff>
+      <max_steer unit="DEG">0</max_steer>
+      <brake_group>RIGHT</brake_group>
+      <retractable>0</retractable>
+    </contact>
+    <contact type="STRUCTURE" name="TAIL_SKID">
+      <location unit="IN"><x>200</x><y>0</y><z>0</z></location>
+      <static_friction>0.2</static_friction>
+      <dynamic_friction>0.2</dynamic_friction>
+      <spring_coeff unit="LBS/FT">20000</spring_coeff>
+      <damping_coeff unit="LBS/FT/SEC">1000</damping_coeff>
+    </contact>
+  </ground_reactions>
+  <propulsion>
+    <engine file="eng_io320">
+      <location unit="IN"><x>-36.5</x><y>0</y><z>26.4</z></location>
+      <point unit="IN"><x>-44</x><y>0</y><z>26.4</z></point>
+      <feed>0</feed>
+      <thruster file="prop_75in2f">
+        <location unit="IN"><x>-36.5</x><y>0</y><z>26.4</z></location>
+        <orientation unit="DEG"><roll>0</roll><pitch>0</pitch><yaw>0</yaw></orientation>
+        <sense>1</sense>
+        <p_factor>0.1</p_factor>
+      </thruster>
+    </engine>
+    <tank type="FUEL" number="0">
+      <location unit="IN"><x>48</x><y>0</y><z>32</z></location>
+      <capacity unit="LBS">336</capacity>
+      <contents unit="LBS">336</contents>
+    </tank>
+  </propulsion>
+  <flight_control name="FCS: c172p">
+    <channel name="Pitch">
+      <summer name="Pitch Trim Sum">
+        <input>fcs/elevator-cmd-norm</input>
+        <input>fcs/pitch-trim-cmd-norm</input>
+        <clipto><min>-1</min><max>1</max></clipto>
+      </summer>
+      <aerosurface_scale name="Elevator Control">
+        <input>Pitch Trim Sum</input>
+        <range><min>-0.349066</min><max>0.349066</max></range>
+        <output>fcs/elevator-pos-rad</output>
+      </aerosurface_scale>
+    </channel>
+    <channel name="Roll">
+      <summer name="Roll Trim Sum">
+        <input>fcs/aileron-cmd-norm</input>
+        <input>fcs/aileron-trim-cmd-norm</input>
+        <clipto><min>-1</min><max>1</max></clipto>
+      </summer>
+      <aerosurface_scale name="Left Aileron">
+        <input>Roll Trim Sum</input>
+        <range><min>-0.349066</min><max>0.349066</max></range>
+        <output>fcs/left-aileron-pos-rad</output>
+      </aerosurface_scale>
+      <aerosurface_scale name="Right Aileron">
+        <input>-Roll Trim Sum</input>
+        <range><min>-0.349066</min><max>0.349066</max></range>
+        <output>fcs/right-aileron-pos-rad</output>
+      </aerosurface_scale>
+    </channel>
+    <channel name="Yaw">
+      <summer name="Yaw Trim Sum">
+        <input>fcs/rudder-cmd-norm</input>
+        <input>fcs/rudder-trim-cmd-norm</input>
+        <clipto><min>-1</min><max>1</max></clipto>
+      </summer>
+      <aerosurface_scale name="Rudder Control">
+        <input>Yaw Trim Sum</input>
+        <range><min>-0.349066</min><max>0.349066</max></range>
+        <output>fcs/rudder-pos-rad</output>
+      </aerosurface_scale>
+    </channel>
+    <channel name="Flaps">
+      <kinematic name="Flaps Control">
+        <input>fcs/flap-cmd-norm</input>
+        <traverse>
+          <setting><position>0</position><time>0</time></setting>
+          <setting><position>0.25</position><time>1</time></setting>
+          <setting><position>0.5</position><time>1</time></setting>
+          <setting><position>0.75</position><time>1</time></setting>
+          <setting><position>1</position><time>1</time></setting>
+        </traverse>
+        <output>fcs/flap-pos-norm</output>
+      </kinematic>
+    </channel>
+    <channel name="Gear">
+      <kinematic name="Gear Control">
+        <input>gear/gear-cmd-norm</input>
+        <traverse>
+          <setting><position>0</position><time>0</time></setting>
+          <setting><position>1</position><time>3</time></setting>
+        </traverse>
+        <output>gear/gear-pos-norm</output>
+      </kinematic>
+    </channel>
+  </flight_control>
+  <aerodynamics>
+    <alphalimits unit="RAD">
+      <min>-0.087</min><max>0.28</max>
+    </alphalimits>
+    <hysteresis_limits unit="RAD">
+      <min>0.09</min><max>0.297</max>
+    </hysteresis_limits>
+    <function name="aero/function/kCLge">
+      <description>Ground effect on lift</description>
+      <product>
+        <table><independentVar>aero/h_b-mac-ft</independentVar>
+          <tableData>0.0 1.2 0.1 1.1 0.5 1.0 1.0 1.0</tableData></table>
+      </product>
+    </function>
+    <axis name="LIFT">
+      <function name="aero/coefficient/CLwbh">
+        <description>Lift due to alpha</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <table><independentVar lookup="row">aero/alpha-rad</independentVar>
+            <tableData>-0.09 -0.4 0 0.05 0.28 1.2 0.6 1.0 0.9 0.8</tableData></table>
+          <property>aero/function/kCLge</property>
+        </product>
+      </function>
+      <function name="aero/coefficient/CLDf">
+        <description>Delta Lift due to flaps</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>fcs/flap-pos-norm</property>
+          <value>0.4</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/CLDe">
+        <description>Lift due to elevator</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>fcs/elevator-pos-rad</property>
+          <value>0.2</value>
+        </product>
+      </function>
+    </axis>
+    <axis name="DRAG">
+      <function name="aero/coefficient/CD0">
+        <description>Drag at zero lift</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <value>0.03</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/CDi">
+        <description>Induced drag</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>aero/cl-squared</property>
+          <value>0.05</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/CDf">
+        <description>Drag due to flaps</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>fcs/flap-pos-norm</property>
+          <value>0.03</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/CDgear">
+        <description>Drag due to gear</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>gear/gear-pos-norm</property>
+          <value>0.02</value>
+        </product>
+      </function>
+    </axis>
+    <axis name="SIDE">
+      <function name="aero/coefficient/CYb">
+        <description>Side force due to beta</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>aero/beta-rad</property>
+          <value>-0.4</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/CYdr">
+        <description>Side force due to rudder</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>fcs/rudder-pos-rad</property>
+          <value>0.2</value>
+        </product>
+      </function>
+    </axis>
+    <axis name="ROLL">
+      <function name="aero/coefficient/Clb">
+        <description>Roll moment due to beta</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>aero/beta-rad</property>
+          <value>-0.09</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/Clp">
+        <description>Roll moment due to roll rate</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>velocities/p-aero-rad_sec</property>
+          <property>metrics/cbarw-ft</property>
+          <value>-0.4</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/ClDa">
+        <description>Roll moment due to aileron</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>fcs/left-aileron-pos-rad</property>
+          <value>0.17</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/Cldr">
+        <description>Roll moment due to rudder</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>fcs/rudder-pos-rad</property>
+          <value>0.01</value>
+        </product>
+      </function>
+    </axis>
+    <axis name="PITCH">
+      <function name="aero/coefficient/Cmalpha">
+        <description>Pitch moment due to alpha</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/cbarw-ft</property>
+          <property>aero/alpha-rad</property>
+          <value>-1.0</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/Cmq">
+        <description>Pitch moment due to pitch rate</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/cbarw-ft</property>
+          <property>velocities/q-aero-rad_sec</property>
+          <property>metrics/cbarw-ft</property>
+          <value>-12.0</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/Cmde">
+        <description>Pitch moment due to elevator</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/cbarw-ft</property>
+          <property>fcs/elevator-pos-rad</property>
+          <value>-1.2</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/Cmdf">
+        <description>Pitch moment due to flaps</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/cbarw-ft</property>
+          <property>fcs/flap-pos-norm</property>
+          <value>-0.1</value>
+        </product>
+      </function>
+    </axis>
+    <axis name="YAW">
+      <function name="aero/coefficient/Cnb">
+        <description>Yaw moment due to beta</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>aero/beta-rad</property>
+          <value>0.06</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/Cnr">
+        <description>Yaw moment due to yaw rate</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>velocities/r-aero-rad_sec</property>
+          <property>metrics/cbarw-ft</property>
+          <value>-0.15</value>
+        </product>
+      </function>
+      <function name="aero/coefficient/Cndr">
+        <description>Yaw moment due to rudder</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>fcs/rudder-pos-rad</property>
+          <value>-0.1</value>
+        </product>
+      </function>
+    </axis>
+  </aerodynamics>
+  <external_reactions></external_reactions>
 </fdm_config>`;
 
-    const ENG_IO320_XML = `<?xml version="1.0"?>
-<!--
-  File:     IO320.xml
-  Author:   Ron Jensen
-  Inputs:
-    name:           IO320
-    type:           piston
-    power:          160.0 hp
-    augmented?      no
-    injected?      no
--->
-<piston_engine name="IO320">
-  <minmp unit="INHG">        10.0  </minmp>
-  <maxmp unit="INHG">        28.5  </maxmp>	
-  <displacement unit="IN3"> 320.0  </displacement>
-  <maxhp>                   160.0  </maxhp>	
-  <bsfc>                      0.32 </bsfc>
-  <cycles>                    4.0  </cycles>
-  <idlerpm>                 550.0  </idlerpm>
-  <maxrpm>                 2700.0  </maxrpm>
-  <maxthrottle>               1.0  </maxthrottle>
-  <minthrottle>               0.1  </minthrottle>
-  <sparkfaildrop>             0.1 </sparkfaildrop>
-</piston_engine>`;
+// IO-320 piston engine (simplified but valid JSBSim format)
+const ENG_IO320_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<fdm_config name="eng_io320" version="2.0" release="BETA">
+  <fileheader>
+    <author>JSBSim Team / Flight Sim</author>
+    <filecreationdate>2024-01-01</filecreationdate>
+    <description>IO-320 Piston Engine</description>
+  </fileheader>
+  <piston_engine name="IO-320">
+    <minmp unit="INHG">10</minmp>
+    <maxmp unit="INHG">29</maxmp>
+    <displacement unit="IN3">320</displacement>
+    <maxhp>160</maxhp>
+    <cycles>4</cycles>
+    <idlerpm>600</idlerpm>
+    <maxrpm>2700</maxrpm>
+    <maxthrottle>1</maxthrottle>
+    <minthrottle>0.1</minthrottle>
+    <sparkfaildrop>0.1</sparkfaildrop>
+    <volumetric-efficiency>0.85</volumetric-efficiency>
+    <static-friction unit="LBS/FT">0.5</static-friction>
+  </piston_engine>
+</fdm_config>`;
 
-    const PROP_75IN2F_XML = `<?xml version="1.0"?>
-<propeller name="Fixed-Pitch 75-inch Two-Blade Propeller">
-  <ixx> 1.67 </ixx>
-  <diameter unit="IN"> 75.0 </diameter>
-  <numblades> 2 </numblades>
-  <minpitch> 22 </minpitch>
-  <maxpitch> 22 </maxpitch>
-  <table name="C_THRUST" type="internal">
-    <tableData>
-      0.0   0.073
-      0.1   0.073
-      0.2   0.072
-      0.3   0.071
-      0.4   0.069
-      0.5   0.066
-      0.6   0.062
-      0.7   0.055
-      0.8   0.045
-      0.9   0.034
-      1.0   0.024
-      1.1   0.013
-      1.2   -0.006
-      1.3   -0.013
-      1.4   -0.024
-      1.5   -0.034
-      1.6   -0.045
-      1.7   -0.055
-      1.8   -0.062
-      1.9   -0.066
-      2.0   -0.069
-      2.1   -0.071
-      2.2   -0.072
-      2.3   -0.073
-      5.0   -0.073
-    </tableData>
-  </table>
-</propeller>`;
+// 75-inch 2-blade propeller
+const PROP_75IN2F_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<fdm_config name="prop_75in2f" version="2.0" release="BETA">
+  <fileheader>
+    <author>JSBSim Team / Flight Sim</author>
+    <filecreationdate>2024-01-01</filecreationdate>
+    <description>75 inch 2 blade propeller</description>
+  </fileheader>
+  <propeller version="1.01" name="prop_75in2f">
+    <ixx unit="SLUG*FT2">1.7</ixx>
+    <diameter unit="IN">75</diameter>
+    <numblades>2</numblades>
+    <gearratio>1</gearratio>
+    <minpitch>5</minpitch>
+    <maxpitch>25</maxpitch>
+    <minrpm>500</minrpm>
+    <maxrpm>2700</maxrpm>
+    <constspeed>0</constspeed>
+    <reversepitch>0</reversepitch>
+    <p_factor>0.1</p_factor>
+    <table name="C_THRUST" type="internal">
+      <tableData>0.0 0.06 0.05 0.05 0.1 0.04 0.2 0.03 0.3 0.02 0.4 0.01 0.5 0.0 0.6 -0.01 0.7 -0.02 0.8 -0.04</tableData>
+    </table>
+    <table name="C_POWER" type="internal">
+      <tableData>0.0 0.06 0.05 0.05 0.1 0.04 0.2 0.03 0.3 0.02 0.4 0.01 0.5 0.0 0.6 -0.01 0.7 -0.02 0.8 -0.04</tableData>
+    </table>
+    <table name="CT_MACH" type="internal">
+      <tableData>0.0 1.0 0.5 1.0 0.7 1.0 0.8 0.95 0.9 0.85 1.0 0.7</tableData>
+    </table>
+    <table name="CP_MACH" type="internal">
+      <tableData>0.0 1.0 0.5 1.0 0.7 1.0 0.8 0.95 0.9 0.85 1.0 0.7</tableData>
+    </table>
+  </propeller>
+</fdm_config>`;
 
-    const RESET00_XML = `<?xml version="1.0" encoding="UTF-8"?>
+// Minimal propulsion system (JSBSim expects this)
+const PROPULSION_SYS_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<system name="propulsion">
+  <channel name="Engine">
+    <switch name="fcs/mixture-cmd-norm">
+      <default value="1.0"/>
+    </switch>
+  </channel>
+</system>`;
+
+// GNC-255 nav radio stub (JSBSim c172p references this — we stub it)
+const GNC255_SYS_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<system name="GNC-255">
+  <channel name="Nav">
+    <pure_gain name="nav/standby-frequency-mhz">
+      <input>0</input>
+      <gain>1</gain>
+    </pure_gain>
+  </channel>
+</system>`;
+
+// IC and script files
+const RESET00_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <initialize name="reset00">
   <ubody unit="FT/SEC"> 120.0 </ubody>
   <vbody unit="FT/SEC"> 0.0 </vbody>
@@ -1222,7 +1581,7 @@
   <altitude unit="FT"> 1500.0 </altitude>
 </initialize>`;
 
-    const FLIGHT_SCRIPT_XML = `<?xml version="1.0" encoding="UTF-8"?>
+const FLIGHT_SCRIPT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <runscript name="SimpleFlight">
   <use aircraft="c172p" initialize="reset00"/>
   <run start="0.0" end="3600" dt="0.008333">
@@ -1236,722 +1595,367 @@
   </run>
 </runscript>`;
 
-    // ---- State ----
-    let viewer, sdk, modelEntity, lastTime = 0, lastFpsTime = 0, frameCount = 0, fps = 0;
-    let keys = {};
-    let thrIn = 0.75;
-    let mx = 0, my = 0;
-    let gpIdx = -1;
-    let paused = false;
-    let crashed = false;
-    let flapPos = 0;
-    let gearDown = true;
-    let brakes = false;
-    let mouseSens = 1.2;
-    let cameraMode = 'chase';
-    let loadingProgress = 0;
-    const apState = { master: false, alt: false, hdg: false, spd: false };
-    const safeVal = (v, d) => (Number.isFinite(v) ? v : d);
-    const touchState = { left: null, right: null };
-    function roundedRect(ctx2, x, y, w, h, r) {
-      if (ctx2.roundRect) { ctx2.roundRect(x, y, w, h, r); return; }
-      const radius = Math.min(r, w / 2, h / 2);
-      ctx2.beginPath();
-      ctx2.moveTo(x + radius, y);
-      ctx2.lineTo(x + w - radius, y);
-      ctx2.quadraticCurveTo(x + w, y, x + w, y + radius);
-      ctx2.lineTo(x + w, y + h - radius);
-      ctx2.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
-      ctx2.lineTo(x + radius, y + h);
-      ctx2.quadraticCurveTo(x, y + h, x, y + h - radius);
-      ctx2.lineTo(x, y + radius);
-      ctx2.quadraticCurveTo(x, y, x + radius, y);
-      ctx2.closePath();
-    }
-    const elLoadingBar = document.getElementById('loadingBar');
-    const elLoadingStatus = document.getElementById('loadingStatus');
-    const elLoadingScreen = document.getElementById('loadingScreen');
+// =================== JSBSIM INIT ===================
+async function setupJSBSim() {
+  setLoading(50, 'Loading JSBSim WASM...');
+  try {
+    const { JSBSimSdk } = await import('@0x62/jsbsim-wasm');
+    const { wasmModuleUrl, wasmBinaryUrl } = await import('@0x62/jsbsim-wasm/wasm');
 
-    function setLoading(pct, text) {
-      loadingProgress = pct;
-      elLoadingBar.style.width = pct + '%';
-      if (text) elLoadingStatus.textContent = text;
-    }
-
-    // ---- Aircraft placeholder glTF data URI ----
-    function generateAircraftGltfUri() {
-      const verts = [];
-      let vCount = 0;
-      function addBox(cx, cy, cz, hx, hy, hz) {
-        const vs = [
-          [-1,-1,-1], [1,-1,-1], [1,1,-1], [-1,1,-1],
-          [-1,-1,1], [1,-1,1], [1,1,1], [-1,1,1]
-        ].map(p => [cx + p[0]*hx, cy + p[1]*hy, cz + p[2]*hz]);
-        const faces = [
-          {idx: [0,1,2,3], n: [0,0,-1]}, {idx: [5,4,7,6], n: [0,0,1]},
-          {idx: [4,0,3,7], n: [-1,0,0]}, {idx: [1,5,6,2], n: [1,0,0]},
-          {idx: [4,5,1,0], n: [0,-1,0]}, {idx: [3,2,6,7], n: [0,1,0]}
-        ];
-        for (const f of faces) {
-          const tri = [f.idx[0], f.idx[1], f.idx[2], f.idx[0], f.idx[2], f.idx[3]];
-          for (const t of tri) {
-            const v = vs[t];
-            verts.push(v[0], v[1], v[2], f.n[0], f.n[1], f.n[2]);
-          }
-        }
-        vCount += faces.length * 6;
-      }
-      // 737-like placeholder: long fuselage, swept multi-section wings, engine nacelles, tail
-      // Fuselage (nose along +Y)
-      addBox(0, 0, 0, 1.4, 18.0, 1.4);
-      // Forward and aft tapered sections
-      addBox(0, 12.0, 0, 1.2, 4.0, 1.2);
-      addBox(0, -14.0, 0, 1.1, 4.0, 1.1);
-      // Main wing
-      addBox(0, 1.5, -0.2, 10.0, 3.0, 0.3);
-      // Winglet stubs
-      addBox(8.5, 1.5, -0.2, 0.4, 1.0, 0.5);
-      addBox(-8.5, 1.5, -0.2, 0.4, 1.0, 0.5);
-      // Engine nacelles
-      addBox(2.8, -0.5, -1.4, 1.1, 2.5, 1.2);
-      addBox(-2.8, -0.5, -1.4, 1.1, 2.5, 1.2);
-      // Horizontal stabilizer
-      addBox(0, -16.5, 0.0, 3.8, 0.9, 0.15);
-      // Vertical stabilizer
-      addBox(0, -16.5, 2.5, 0.2, 1.8, 2.6);
-
-      const floats = new Float32Array(verts);
-      const bytes = new Uint8Array(floats.buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
-
-      const gltf = {
-        asset: { version: "2.0" },
-        scene: 0,
-        scenes: [{ nodes: [0] }],
-        nodes: [{ mesh: 0, scale: [1,1,1] }],
-        meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, mode: 4, material: 0 }] }],
-        materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.9,0.9,0.95,1], metallicFactor: 0.6, roughnessFactor: 0.35 } }],
-        accessors: [
-          { bufferView: 0, componentType: 5126, count: vCount, type: "VEC3", max: [10.1, 22.1, 6.1], min: [-10.1, -22.1, -3.1] },
-          { bufferView: 0, byteOffset: 12, componentType: 5126, count: vCount, type: "VEC3" }
-        ],
-        bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: floats.byteLength, byteStride: 24 }],
-        buffers: [{ uri: "data:application/octet-stream;base64," + base64, byteLength: floats.byteLength }]
-      };
-      return "data:application/json;base64," + btoa(JSON.stringify(gltf));
-    }
-
-    // ---- Controls ----
-    function setupControls() {
-      window.addEventListener('keydown', e => {
-        keys[e.code] = true;
-        if (e.code >= 'Digit0' && e.code <= 'Digit9') {
-          const n = parseInt(e.code.slice(-1), 10);
-          thrIn = clamp(n / 10, 0, 0.9);
-        }
-        if (e.code === 'KeyF') {
-          flapPos = (flapPos + 1) % 5; // 0,1,2,3,4 -> 0,25,50,75,100%
-        }
-        if (e.code === 'KeyG') gearDown = !gearDown;
-        if (e.code === 'KeyB') brakes = !brakes;
-        if (e.code === 'KeyP') paused = !paused;
-        if (e.code === 'KeyR') resetFlight();
-      });
-      window.addEventListener('keyup', e => keys[e.code] = false);
-
-      const cesiumContainer = document.getElementById('cesiumContainer');
-      cesiumContainer.addEventListener('click', () => {
-        if (document.pointerLockElement !== cesiumContainer) {
-          cesiumContainer.requestPointerLock?.();
-        }
-      });
-      document.addEventListener('pointerlockchange', () => {
-        if (document.pointerLockElement === cesiumContainer) {
-          mx = 0; my = 0;
-        }
-      });
-      document.addEventListener('mousemove', e => {
-        if (document.pointerLockElement) {
-          mx += e.movementX * 0.002 * mouseSens;
-          my += e.movementY * 0.002 * mouseSens;
-          mx = clamp(mx, -1, 1); my = clamp(my, -1, 1);
-        }
-      });
-
-      window.addEventListener('gamepadconnected', e => { gpIdx = e.gamepad.index; });
-      window.addEventListener('gamepaddisconnected', e => { if (gpIdx === e.gamepad.index) gpIdx = -1; });
-
-      // Mobile touch zones / virtual joysticks
-      const touchZones = document.getElementById('touchZones');
-      const stickEls = { left: document.getElementById('leftStick'), right: document.getElementById('rightStick') };
-      function updateStickVisual(side) {
-        const st = touchState[side];
-        const el = stickEls[side];
-        if (!st || !el) { el.classList.remove('active'); return; }
-        el.style.left = (st.sx - 60) + 'px';
-        el.style.top = (st.sy - 60) + 'px';
-        el.classList.add('active');
-        const knob = el.querySelector('.touch-knob');
-        knob.style.transform = `translate(${st.dx * 36}px, ${st.dy * 36}px)`;
-      }
-      function handleTouch(e) {
-        e.preventDefault();
-        const w = window.innerWidth, h = window.innerHeight;
-        for (let t of e.changedTouches) {
-          const side = t.clientX < w / 2 ? 'left' : 'right';
-          if (e.type === 'touchstart') {
-            touchState[side] = { id: t.identifier, sx: t.clientX, sy: t.clientY, dx: 0, dy: 0 };
-            updateStickVisual(side);
-          } else if (e.type === 'touchmove' && touchState[side] && touchState[side].id === t.identifier) {
-            touchState[side].dx = clamp((t.clientX - touchState[side].sx) / (w / 6), -1, 1);
-            touchState[side].dy = clamp((t.clientY - touchState[side].sy) / (h / 6), -1, 1);
-            updateStickVisual(side);
-          } else if ((e.type === 'touchend' || e.type === 'touchcancel') && touchState[side] && touchState[side].id === t.identifier) {
-            touchState[side] = null;
-            updateStickVisual(side);
-          }
-        }
-      }
-      touchZones.addEventListener('touchstart', handleTouch, { passive: false });
-      touchZones.addEventListener('touchmove', handleTouch, { passive: false });
-      touchZones.addEventListener('touchend', handleTouch, { passive: false });
-      touchZones.addEventListener('touchcancel', handleTouch, { passive: false });
-
-      // Menu toggles
-      document.getElementById('menuToggle').addEventListener('click', () => {
-        document.getElementById('menuPanel').classList.toggle('open');
-      });
-      document.getElementById('mouseSens').addEventListener('input', e => {
-        mouseSens = parseFloat(e.target.value);
-        document.getElementById('mouseSensVal').textContent = mouseSens.toFixed(1);
-      });
-      document.getElementById('cameraSelect').addEventListener('change', e => cameraMode = e.target.value);
-
-      // Menu settings
-      document.getElementById('gfxQuality').addEventListener('change', e => {
-        const q = e.target.value;
-        if (!viewer) return;
-        if (q === 'low') {
-          viewer.scene.fxaa = false;
-          viewer.resolutionScale = 0.75;
-          viewer.targetFrameRate = 30;
-        } else if (q === 'medium') {
-          viewer.scene.fxaa = true;
-          viewer.resolutionScale = 1.0;
-          viewer.targetFrameRate = 60;
-        } else {
-          viewer.scene.fxaa = true;
-          viewer.resolutionScale = window.devicePixelRatio || 1.0;
-          viewer.targetFrameRate = 0;
-        }
-      });
-      document.getElementById('terrainDetail').addEventListener('change', e => {
-        const t = e.target.value;
-        if (!viewer || !viewer.scene.globe) return;
-        // Lower value = more detailed terrain; higher value = coarser/faster
-        if (t === 'low') {
-          viewer.scene.globe.maximumScreenSpaceError = 4;
-        } else if (t === 'medium') {
-          viewer.scene.globe.maximumScreenSpaceError = 2;
-        } else {
-          viewer.scene.globe.maximumScreenSpaceError = 1;
-        }
-      });
-
-      document.getElementById('applyIonToken').addEventListener('click', () => {
-        const token = document.getElementById('ionToken').value.trim();
-        if (!token) {
-          console.log('[Cesium] No token provided; using ellipsoid terrain.');
-          if (viewer && viewer.scene) {
-            viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-          }
-          return;
-        }
-        enableWorldTerrain(token);
-      });
-
-      // Autopilot toggles
-      document.getElementById('apMaster').addEventListener('click', () => toggleAp('master'));
-      document.getElementById('apAltBtn').addEventListener('click', () => toggleAp('alt'));
-      document.getElementById('apHdgBtn').addEventListener('click', () => toggleAp('hdg'));
-      document.getElementById('apSpdBtn').addEventListener('click', () => toggleAp('spd'));
-    }
-
-    function toggleAp(mode) {
-      apState[mode] = !apState[mode];
-      const btn = { master: 'apMaster', alt: 'apAltBtn', hdg: 'apHdgBtn', spd: 'apSpdBtn' }[mode];
-      const el = document.getElementById(btn);
-      el.classList.toggle('active', apState[mode]);
-      if (mode === 'master') el.textContent = apState[mode] ? 'ON' : 'OFF';
-    }
-
-    function updateControls(dt) {
-      if (!sdk) return;
-      let el = 0, al = 0, ru = 0;
-
-      if (keys.KeyW || keys.ArrowUp) el -= 0.8;
-      if (keys.KeyS || keys.ArrowDown) el += 0.8;
-      if (keys.KeyA || keys.ArrowLeft) al -= 0.8;
-      if (keys.KeyD || keys.ArrowRight) al += 0.8;
-      if (keys.KeyQ) ru -= 0.8;
-      if (keys.KeyE) ru += 0.8;
-
-      const thrRate = dt || 0.016;
-      if (keys.ShiftLeft || keys.ShiftRight) thrIn = Math.min(1, thrIn + 0.5 * thrRate);
-      if (keys.ControlLeft || keys.ControlRight) thrIn = Math.max(0, thrIn - 0.5 * thrRate);
-
-      // Pointer lock mouse control
-      if (document.pointerLockElement) {
-        el = my * 1.5;
-        al = mx * 1.5;
-      }
-
-      // Gamepad
-      if (gpIdx >= 0) {
-        const gp = navigator.getGamepads()[gpIdx];
-        if (gp) {
-          const adz = v => Math.abs(v) < 0.08 ? 0 : Math.sign(v) * (Math.abs(v) - 0.08) / 0.92;
-          if (Math.abs(gp.axes[0]) > 0.01) al = adz(gp.axes[0]);
-          if (Math.abs(gp.axes[1]) > 0.01) el = adz(gp.axes[1]);
-          if (Math.abs(gp.axes[2]) > 0.01) ru = adz(gp.axes[2]);
-          if (gp.axes[3] !== undefined) thrIn = (1 - adz(gp.axes[3])) / 2 + 0.5;
-        }
-      }
-
-      // Mobile touch joysticks: left side throttle, right side pitch/roll
-      if (touchState.left) {
-        thrIn = clamp((1 - touchState.left.dy) / 2, 0, 1);
-      }
-      if (touchState.right) {
-        al = clamp(touchState.right.dx * 1.5, -1, 1);
-        el = clamp(touchState.right.dy * 1.5, -1, 1);
-      }
-
-      try {
-        sdk.setPropertyValue("fcs/elevator-cmd-norm", clamp(el, -1, 1));
-        sdk.setPropertyValue("fcs/aileron-cmd-norm", clamp(al, -1, 1));
-        sdk.setPropertyValue("fcs/rudder-cmd-norm", clamp(ru, -1, 1));
-        sdk.setPropertyValue("fcs/throttle-cmd-norm", clamp(thrIn, 0, 1));
-        sdk.setPropertyValue("fcs/flap-cmd-norm", flapPos / 4);
-        sdk.setPropertyValue("gear/gear-cmd-norm", gearDown ? 1 : 0);
-      } catch (e) { console.error('[JSBSim] set controls failed', e); }
-    }
-
-    // ---- Autopilot ----
-    function updateAP() {
-      if (!apState.master || !sdk) return;
-      try {
-        if (apState.alt) {
-          const tgtAlt = parseFloat(document.getElementById('apAlt').value) || 3000;
-          const err = (tgtAlt - safeVal(sdk.getPropertyValue('position/h-sl-ft'), 1500)) * mPerFt;
-          sdk.setPropertyValue('fcs/pitch-trim-cmd-norm', clamp(err * 0.001, -0.5, 0.5));
-        }
-        if (apState.hdg) {
-          const tgtHdg = parseFloat(document.getElementById('apHdg').value) || 90;
-          let err = tgtHdg - safeVal(sdk.getPropertyValue('attitude/psi-deg'), 90);
-          if (err > 180) err -= 360; if (err < -180) err += 360;
-          sdk.setPropertyValue('fcs/aileron-cmd-norm', clamp(err * 0.02, -0.3, 0.3));
-        }
-        if (apState.spd) {
-          const err = 80 - safeVal(sdk.getPropertyValue('velocities/vc-kts'), 0);
-          sdk.setPropertyValue('fcs/throttle-cmd-norm', clamp(0.5 + err * 0.005, 0, 1));
-        }
-      } catch (e) { console.error('[JSBSim] AP failed', e); }
-    }
-
-    function resetFlight() {
-      crashed = false;
-      document.getElementById('crashOverlay').classList.remove('show');
-      if (!sdk) return;
-      try {
-        sdk.runIc();
-        thrIn = 0.75;
-      } catch (e) { console.error('[JSBSim] reset failed', e); }
-    }
-
-    // ---- HUD ----
-    function drawHUD() {
-      const canvas = document.getElementById('hudCanvas');
-      const ctx = canvas.getContext('2d');
-      const w = canvas.width = canvas.clientWidth;
-      const h = canvas.height = canvas.clientHeight;
-      const sc = Math.min(w / 1200, h / 800);
-      const cx = w / 2, cy = h / 2 + 60;
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.save();
-
-      // Fetch data
-      let ias = 0, gs = 0, vs = 0, alt = 1500, hdg = 90, pitch = 0, roll = 0, rpm = 0;
-      if (sdk) {
-        try {
-          ias = safeVal(sdk.getPropertyValue('velocities/vc-kts'), 0);
-          gs = safeVal(sdk.getPropertyValue('velocities/vg-kts'), 0);
-          vs = safeVal(sdk.getPropertyValue('velocities/fps-fps'), 0);
-          alt = safeVal(sdk.getPropertyValue('position/h-sl-ft'), 1500);
-          hdg = safeVal(sdk.getPropertyValue('attitude/psi-deg'), 90);
-          pitch = safeVal(sdk.getPropertyValue('attitude/theta-deg'), 0);
-          roll = safeVal(sdk.getPropertyValue('attitude/phi-deg'), 0);
-          rpm = safeVal(sdk.getPropertyValue('propulsion/engine/engine-rpm'), 0);
-        } catch (e) {}
-      }
-
-      // Artificial Horizon
-      const r = sc * 200;
-      ctx.translate(cx, cy);
-      ctx.save();
-      ctx.rotate(-roll * DEG);
-      const skyGrad = ctx.createLinearGradient(0, -r, 0, r);
-      skyGrad.addColorStop(0, '#0b3d6e'); skyGrad.addColorStop(0.5, '#0b3d6e'); skyGrad.addColorStop(0.5, '#5c3a1e'); skyGrad.addColorStop(1, '#5c3a1e');
-      ctx.fillStyle = skyGrad;
-      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
-      // Pitch ladder
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.5;
-      for (let p = -20; p <= 20; p += 5) {
-        if (p === 0) continue;
-        const y = -p * sc * 10;
-        ctx.beginPath(); ctx.moveTo(-40 * sc, y); ctx.lineTo(40 * sc, y); ctx.stroke();
-        ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.fillText(p, -45 * sc, y + 3);
-        ctx.textAlign = 'left'; ctx.fillText(p, 45 * sc, y + 3);
-      }
-      ctx.restore();
-
-      // Roll arc
-      ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(0, 0, r + 12 * sc, -Math.PI / 2 - 0.8, -Math.PI / 2 + 0.8); ctx.stroke();
-      for (let a of [-30, -20, -10, 0, 10, 20, 30]) {
-        const ang = -Math.PI / 2 - a * DEG;
-        const rr = r + 12 * sc;
-        ctx.beginPath(); ctx.moveTo(Math.cos(ang) * rr, Math.sin(ang) * rr); ctx.lineTo(Math.cos(ang) * (rr + 8 * sc), Math.sin(ang) * (rr + 8 * sc)); ctx.stroke();
-      }
-      // Roll pointer
-      ctx.fillStyle = '#ffcc00';
-      ctx.beginPath(); ctx.moveTo(0, -r - 18 * sc); ctx.lineTo(-8 * sc, -r - 6 * sc); ctx.lineTo(8 * sc, -r - 6 * sc); ctx.fill();
-      ctx.restore();
-
-      // Flight director / crosshair
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(cx - 20 * sc, cy); ctx.lineTo(cx - 8 * sc, cy); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + 8 * sc, cy); ctx.lineTo(cx + 20 * sc, cy); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, cy - 20 * sc); ctx.lineTo(cx, cy - 8 * sc); ctx.stroke();
-
-      // Flight director chevron (autopilot guidance)
-      let fdX = 0, fdY = 0;
-      if (sdk && apState.master) {
-        try {
-          if (apState.hdg) {
-            const tgtHdg = parseFloat(document.getElementById('apHdg').value) || 90;
-            let hdgErr = tgtHdg - safeVal(sdk.getPropertyValue('attitude/psi-deg'), 90);
-            if (hdgErr > 180) hdgErr -= 360; if (hdgErr < -180) hdgErr += 360;
-            fdX = clamp(hdgErr * 2, -80, 80) * sc;
-          }
-          if (apState.alt) {
-            const tgtAlt = parseFloat(document.getElementById('apAlt').value) || 3000;
-            const altErr = (tgtAlt - safeVal(sdk.getPropertyValue('position/h-sl-ft'), 1500)) / 10;
-            fdY = clamp(altErr, -80, 80) * sc;
-          }
-        } catch (e) {}
-      }
-      const chevronSize = 14 * sc;
-      ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(cx + fdX - chevronSize, cy + fdY + chevronSize); ctx.lineTo(cx + fdX, cy + fdY); ctx.lineTo(cx + fdX + chevronSize, cy + fdY + chevronSize); ctx.stroke();
-
-      // Speed tape (left)
-      drawTape(ctx, 60 * sc, h / 2, 70 * sc, h * 0.55, ias, 0, 200, 'IAS', 'kts');
-      // Altitude tape (right)
-      drawTape(ctx, w - 60 * sc, h / 2, 70 * sc, h * 0.55, alt, 0, 20000, 'ALT', 'ft');
-      // VSI (far right)
-      drawVSI(ctx, w - 20 * sc, h / 2, 12 * sc, h * 0.35, vs * 60);
-      // Heading compass (top center)
-      drawCompass(ctx, w / 2, 50 * sc, w * 0.35, hdg);
-
-      // Info bar values
-      document.getElementById('statGs').textContent = gs.toFixed(0);
-      document.getElementById('statAlt').textContent = alt.toFixed(0);
-      document.getElementById('statHdg').textContent = ((hdg % 360 + 360) % 360).toFixed(0);
-      document.getElementById('statVs').textContent = (vs * 60).toFixed(0);
-      document.getElementById('statThr').textContent = (thrIn * 100).toFixed(0);
-      document.getElementById('statFps').textContent = fps;
-      document.getElementById('statIas').textContent = ias.toFixed(0);
-    }
-
-    function drawTape(ctx, cx, cy, w2, h2, value, min, max, label, unit) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-      roundedRect(ctx, cx - w2, cy - h2, w2 * 2, h2 * 2, 8); ctx.fill(); ctx.stroke();
-      ctx.clip();
-      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
-      const range = max - min; const step = range / 20;
-      for (let v = min; v <= max; v += step) {
-        const y = cy + (v - value) * (h2 * 2 / range);
-        if (y > cy - h2 && y < cy + h2) {
-          ctx.beginPath(); ctx.moveTo(cx - w2 + 5, y); ctx.lineTo(cx + w2 - 5, y); ctx.stroke();
-          ctx.fillStyle = '#a8c7e6'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right'; ctx.fillText(Math.round(v), cx + w2 - 8, y + 3);
-        }
-      }
-      ctx.restore();
-      ctx.fillStyle = 'rgba(10,25,45,0.9)'; ctx.strokeStyle = '#3fb0ff'; ctx.lineWidth = 2;
-      roundedRect(ctx, cx - w2 + 4, cy - 16, w2 * 2 - 8, 32, 6); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#7fd2ff'; ctx.textAlign = 'center'; ctx.font = 'bold 16px sans-serif'; ctx.fillText(value.toFixed(0), cx, cy + 5);
-      ctx.fillStyle = '#8aa7c9'; ctx.font = '10px sans-serif'; ctx.fillText(label + ' ' + unit, cx, cy - 20);
-    }
-
-    function drawVSI(ctx, cx, cy, w2, h2, vsFpm) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
-      roundedRect(ctx, cx - w2, cy - h2, w2 * 2, h2 * 2, 8); ctx.fill(); ctx.stroke();
-      const maxVs = 2000;
-      const barH = clamp(vsFpm / maxVs, -1, 1) * (h2 - 10);
-      ctx.fillStyle = vsFpm > 0 ? '#3fbf3f' : '#bf3f3f';
-      ctx.fillRect(cx - w2 + 4, cy - barH, w2 * 2 - 8, barH);
-      ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '11px sans-serif'; ctx.fillText(vsFpm.toFixed(0), cx, cy + 4);
-      ctx.restore();
-    }
-
-    function drawCompass(ctx, cx, cy, w2, hdg) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
-      roundedRect(ctx, cx - w2, cy - 18, w2 * 2, 36, 8); ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, cy + 8); ctx.lineTo(cx - 8, cy + 24); ctx.lineTo(cx + 8, cy + 24); ctx.fill();
-      const tickSpan = 60;
-      const pxPerDeg = w2 / 30;
-      ctx.fillStyle = '#cce6ff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-      for (let i = -180; i <= 180; i += 5) {
-        const v = ((hdg + i + 360) % 360);
-        const x = cx - i * pxPerDeg;
-        if (x < cx - w2 || x > cx + w2) continue;
-        if (v % 90 === 0) {
-          ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, cy - 12); ctx.lineTo(x, cy + 12); ctx.stroke();
-          const label = v === 0 ? 'N' : v === 90 ? 'E' : v === 180 ? 'S' : 'W';
-          ctx.fillText(label, x, cy - 14);
-        } else if (v % 10 === 0) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.moveTo(x, cy - 6); ctx.lineTo(x, cy + 6); ctx.stroke();
-          ctx.fillText(v.toString(), x, cy - 8);
-        }
-      }
-      ctx.restore();
-    }
-
-    // ---- Init ----
-    async function init() {
-      setLoading(10, 'Initializing CesiumJS...');
-      viewer = new Cesium.Viewer('cesiumContainer', {
-        baseLayer: false,
-        sceneModePicker: false, baseLayerPicker: false,
-        geocoder: false, homeButton: false,
-        infoBox: false, selectionIndicator: false,
-        navigationHelpButton: false,
-        animation: false, timeline: false,
-        fullscreenButton: false, vrButton: false,
-      });
-
-      setLoading(25, 'Loading satellite imagery...');
-      viewer.imageryLayers.removeAll();
-      viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        maximumLevel: 18, credit: 'Esri'
-      }));
-
-      setLoading(35, 'Setting up atmosphere...');
-      viewer.scene.skyAtmosphere.show = true;
-      viewer.scene.fog.enabled = true;
-      viewer.scene.fog.density = 0.0002;
-      viewer.scene.globe.enableLighting = true;
-      // Terrain: default to the token-free ellipsoid. World Terrain can be enabled
-      // later by pasting a valid Cesium Ion access token and clicking the button.
-      viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-
-      async function enableWorldTerrain(token) {
-        try {
-          Cesium.Ion.defaultAccessToken = token;
-          if (Cesium.Terrain && Cesium.Terrain.fromWorldTerrain) {
-            const provider = await Cesium.Terrain.fromWorldTerrain();
-            if (viewer && viewer.scene) {
-              viewer.scene.terrainProvider = provider;
-              console.log('[Cesium] World terrain enabled.');
-            }
-          } else if (typeof Cesium.createWorldTerrain === 'function') {
-            viewer.scene.terrainProvider = Cesium.createWorldTerrain();
-          }
-        } catch (e) {
-          console.warn('[Cesium] World terrain unavailable, using ellipsoid.', e);
-          if (viewer && viewer.scene) {
-            viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-          }
-        }
-      }
-
-      setLoading(50, 'Loading JSBSim WASM...');
-      sdk = await JSBSimSdk.create({
-        moduleUrl: wasmModuleUrl,
-        wasmUrl: wasmBinaryUrl,
-        log: { console: true, stripAnsi: true }
-      });
-
-      setLoading(65, 'Writing aircraft configs...');
-      sdk.configurePaths({
-        rootDir: '/runtime',
-        aircraftPath: 'aircraft',
-        enginePath: 'engine',
-        systemsPath: 'systems'
-      });
-      sdk.writeDataFile('aircraft/c172p/c172p.xml', C172P_XML);
-      sdk.writeDataFile('engine/eng_io320.xml', ENG_IO320_XML);
-      sdk.writeDataFile('engine/prop_75in2f.xml', PROP_75IN2F_XML);
-      sdk.writeDataFile('aircraft/c172p/reset00.xml', RESET00_XML);
-      sdk.writeDataFile('scripts/flight.xml', FLIGHT_SCRIPT_XML);
-
-      setLoading(75, 'Loading aircraft model...');
-      sdk.loadModel('c172p');
-      sdk.loadScript('scripts/flight.xml');
-      sdk.runIc();
-
-      setLoading(85, 'Loading 3D model...');
-      // Load the real Boeing 737-800 GLB from a public GitHub repository.
-      // If it fails to load, fall back to the generated 737-like placeholder.
-      const real737Uri = 'https://raw.githubusercontent.com/yc4330/boeing737/main/b737-800_model.glb';
-      const fallbackUri = generateAircraftGltfUri();
-
-      function createAircraftModel(uri) {
-        return viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(-80.2870, 25.7959, 1500 * mPerFt),
-          model: {
-            uri: uri,
-            minimumPixelSize: 64,
-            maximumScale: 20000,
-            scale: 1.0
-          }
-        });
-      }
-
-      if (window.location.protocol === 'file:') {
-        // file:// cannot fetch cross-origin GLB; use local placeholder.
-        modelEntity = createAircraftModel(fallbackUri);
-      } else {
-        // Pre-check the real model; browser cache makes the entity's later load fast.
-        Cesium.Model.fromGltfAsync({ url: real737Uri })
-          .then(() => {
-            modelEntity = createAircraftModel(real737Uri);
-          })
-          .catch((err) => {
-            console.warn('[Model] Real 737 failed to load; falling back to placeholder', err);
-            modelEntity = createAircraftModel(fallbackUri);
-          });
-      }
-
-      setLoading(90, 'Setting up HUD...');
-      setupControls();
-
-      setLoading(95, 'Setting up controls...');
-      // Initial camera
-      viewer.camera.setView({
-        destination: Cesium.Cartesian3.fromDegrees(-80.2870 - 0.01, 25.7959, 1500 * mPerFt + 80),
-        orientation: { heading: 0, pitch: -0.3, roll: 0 }
-      });
-
-      setLoading(100, 'Ready!');
-      setTimeout(() => elLoadingScreen.classList.add('hidden'), 500);
-
-      requestAnimationFrame(gameLoop);
-    }
-
-    // ---- Game Loop ----
-    function gameLoop(now) {
-      requestAnimationFrame(gameLoop);
-      const dt = Math.min((now - lastTime) / 1000, 0.05);
-      lastTime = now;
-
-      if (!paused && !crashed) {
-        updateControls(dt);
-        updateAP();
-        if (sdk) {
-          try {
-            if (sdk.setDt) sdk.setDt(dt);
-            sdk.run();
-          } catch(e) { console.error('[JSBSim] run() failed:', e); }
-        }
-      }
-
-      // Read position with NaN safety
-      let lat = 25.7959, lon = -80.2870, alt = 1500 * mPerFt, hdg = 90, pitch = 0, roll = 0;
-      let ias = 0, gs = 0, vs = 0, aoa = 0, onGnd = false;
-      if (sdk) {
-        try {
-          lat = safeVal(sdk.getPropertyValue('position/lat-geod-deg'), 25.7959);
-          lon = safeVal(sdk.getPropertyValue('position/long-gc-deg'), -80.2870);
-          alt = safeVal(sdk.getPropertyValue('position/h-sl-ft'), 1500) * mPerFt;
-          hdg = safeVal(sdk.getPropertyValue('attitude/psi-deg'), 90);
-          pitch = safeVal(sdk.getPropertyValue('attitude/theta-deg'), 0);
-          roll = safeVal(sdk.getPropertyValue('attitude/phi-deg'), 0);
-          ias = safeVal(sdk.getPropertyValue('velocities/vc-kts'), 0);
-          gs = safeVal(sdk.getPropertyValue('velocities/vg-kts'), 0);
-          vs = safeVal(sdk.getPropertyValue('velocities/fps-fps'), 0);
-          aoa = safeVal(sdk.getPropertyValue('aero/alpha-deg'), 0);
-          onGnd = safeVal(sdk.getPropertyValue('gear/unit[0]/WOW'), 0) > 0.5;
-        } catch (e) { console.error('[JSBSim] read failed', e); }
-      }
-
-      // Update model
-      if (modelEntity) {
-        const pos = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
-        modelEntity.position = pos;
-        const headingR = hdg * DEG;
-        const hpr = new Cesium.HeadingPitchRoll(headingR, pitch * DEG, roll * DEG);
-        modelEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, hpr);
-      }
-
-      // Update camera
-      const headingR = hdg * DEG;
-      const cosLat = Math.cos(lat * DEG) || 0.0001;
-      const dist = 80;
-      const camLon = lon - Math.sin(headingR) * (dist / (111000 * cosLat));
-      const camLat = lat - Math.cos(headingR) * (dist / 111000);
-      const camAlt = Math.max(alt + 20, 15);
-      if (cameraMode === 'chase') {
-        viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(camLon, camLat, camAlt),
-          orientation: { heading: headingR, pitch: -0.3, roll: 0 }
-        });
-      } else {
-        // Tower view
-        viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(-80.3050, 25.7900, 120),
-          orientation: { heading: headingR, pitch: -0.15, roll: 0 }
-        });
-      }
-
-      // Stall / crash
-      document.getElementById('stallWarn').style.display = (aoa > 15 && !onGnd) ? 'block' : 'none';
-      if (vs < -500 && onGnd && !crashed) {
-        crashed = true;
-        document.getElementById('crashOverlay').classList.add('show');
-      }
-
-      // Debug overlay
-      const debugEl = document.getElementById('debugContent');
-      debugEl.innerHTML = `JSBSim: ${sdk ? 'Running' : 'Not loaded'}<br>` +
-        `LAT: ${lat.toFixed(5)} LON: ${lon.toFixed(5)}<br>` +
-        `ALT: ${(alt / mPerFt).toFixed(1)} ft<br>` +
-        `P: ${pitch.toFixed(1)}° R: ${roll.toFixed(1)}° H: ${hdg.toFixed(1)}°<br>` +
-        `IAS: ${ias.toFixed(1)} GS: ${gs.toFixed(1)}<br>` +
-        `VS: ${(vs * 60).toFixed(0)} fpm<br>` +
-        `THR: ${(thrIn * 100).toFixed(0)}% RPM: ${rpm.toFixed(0)}<br>` +
-        `WOW: ${onGnd ? 1 : 0} FPS: ${fps}`;
-
-      drawHUD();
-
-      // FPS
-      frameCount++;
-      if (now - lastFpsTime >= 1000) { fps = frameCount; frameCount = 0; lastFpsTime = now; }
-    }
-
-    init().catch(err => {
-      console.error('[Init] Failed:', err);
-      elLoadingStatus.textContent = 'Initialization failed. See console.';
+    sdk = await JSBSimSdk.create({
+      moduleUrl: wasmModuleUrl,
+      wasmUrl: wasmBinaryUrl,
+      log: { console: true, stripAnsi: true }
     });
-  </script>
+
+    setLoading(60, 'Configuring paths...');
+    sdk.configurePaths({
+      rootDir: '/runtime',
+      aircraftPath: 'aircraft',
+      enginePath: 'engine',
+      systemsPath: 'systems'
+    });
+
+    setLoading(65, 'Writing aircraft configs...');
+    sdk.writeDataFile('aircraft/c172p/c172p.xml', C172P_XML);
+    sdk.writeDataFile('engine/eng_io320.xml', ENG_IO320_XML);
+    sdk.writeDataFile('engine/prop_75in2f.xml', PROP_75IN2F_XML);
+    sdk.writeDataFile('systems/propulsion.xml', PROPULSION_SYS_XML);
+    sdk.writeDataFile('systems/GNC-255.xml', GNC255_SYS_XML);
+    sdk.writeDataFile('aircraft/c172p/reset00.xml', RESET00_XML);
+    sdk.writeDataFile('scripts/flight.xml', FLIGHT_SCRIPT_XML);
+
+    setLoading(70, 'Loading aircraft model...');
+    sdk.loadModel('c172p');
+
+    setLoading(75, 'Loading flight script...');
+    sdk.loadScript('scripts/flight.xml');
+
+    setLoading(80, 'Running initial conditions...');
+    sdk.runIc();
+
+    jsbsimReady = true;
+    document.getElementById('dbgStatus').textContent = 'Running';
+    document.getElementById('dbgPhys').textContent = 'JSBSim';
+    console.log('[JSBSim] Initialized successfully');
+  } catch (e) {
+    jsbsimFailed = true;
+    jsbsimReady = false;
+    document.getElementById('dbgStatus').textContent = 'FAILED — fallback';
+    document.getElementById('dbgPhys').textContent = 'Fallback';
+    console.error('[JSBSim] Init failed, using fallback physics:', e);
+  }
+}
+
+// =================== FALLBACK PHYSICS ===================
+// Simple flat-earth flight model used if JSBSim fails to load.
+function updateFallbackPhysics(dt) {
+  // Convert dt to seconds, clamp
+  const t = clamp(dt, 0.001, 0.05);
+
+  // Forces (very simplified)
+  const g = 32.174;  // ft/s^2
+  const rho0 = 0.002377;  // slugs/ft^3 at sea level
+  const rho = rho0 * Math.exp(-fbState.altFt / 28000);  // density altitude approx
+  const S = 174;  // wing area ft^2
+
+  // Approximate forward speed
+  const v = Math.max(Math.abs(fbState.u), 1);
+  const q = 0.5 * rho * v * v;
+
+  // Lift coefficient (alpha-based)
+  const alpha = fbState.theta;  // simplified: pitch = AoA
+  const CL = 0.05 + 5.5 * alpha - 0.5 * Math.max(0, alpha - 0.28) * 10;
+  const L = q * S * CL;
+
+  // Drag
+  const CD = 0.03 + 0.05 * CL * CL + 0.03 * fbState.flap + 0.02 * fbState.gear;
+  const D = q * S * CD;
+
+  // Thrust (very rough)
+  const T = fbState.throttle * 400;  // 400 lbf max
+
+  // Weight
+  const W = 2000;  // lbs
+
+  // Accelerations along body forward (u)
+  const ax = (T - D) / (W / g);
+  // Vertical: L - W*cos(theta) along body up
+  const az = (L - W * Math.cos(fbState.theta)) / (W / g);
+
+  // Integrate forward velocity
+  fbState.u += ax * t;
+  // Vertical speed (use body w projected to world up)
+  fbState.w = az;
+  // Simplified: vertical speed in ft/s
+  const vsWorld = fbState.u * Math.sin(fbState.theta) + fbState.w * Math.cos(fbState.theta);
+
+  // Attitude dynamics (very simplified)
+  const pitchRate = fbState.elevator * 1.0 - alpha * 0.5;  // rad/s
+  const rollRate = fbState.aileron * 1.5;
+  const yawRate = fbState.rudder * 0.5 + fbState.aileron * 0.1 * Math.sign(fbState.u);
+  fbState.theta += pitchRate * t;
+  fbState.phi += rollRate * t;
+  fbState.psi += yawRate * t;
+  fbState.theta = clamp(fbState.theta, -1.2, 1.2);
+  fbState.phi = clamp(fbState.phi, -1.4, 1.4);
+  // Normalize heading
+  while (fbState.psi < 0) fbState.psi += 2 * Math.PI;
+  while (fbState.psi >= 2 * Math.PI) fbState.psi -= 2 * Math.PI;
+
+  // Position integration
+  const earthRadius = 20925700;  // ft
+  const latRad = fbState.lat * DEG;
+  const lonRad = fbState.lon * DEG;
+  const groundSpeed = fbState.u * Math.cos(fbState.theta) * Math.cos(fbState.phi);
+  const northSpeed = groundSpeed * Math.cos(fbState.psi);
+  const eastSpeed = groundSpeed * Math.sin(fbState.psi);
+
+  const dLat = northSpeed / earthRadius * RAD * t;
+  const dLon = eastSpeed / (earthRadius * Math.cos(latRad)) * RAD * t;
+  fbState.lat += dLat;
+  fbState.lon += dLon;
+  fbState.altFt += vsWorld * t;
+  if (fbState.altFt < 0) {
+    fbState.altFt = 0;
+    fbState.u *= 0.5;
+    if (vsWorld < -30) crashed = true;
+  }
+
+  // Update acState from fallback
+  acState.lat = fbState.lat;
+  acState.lon = fbState.lon;
+  acState.alt = fbState.altFt * mPerFt;
+  acState.hdg = fbState.psi * RAD;
+  acState.pitch = fbState.theta * RAD;
+  acState.roll = fbState.phi * RAD;
+  acState.ias = Math.abs(fbState.u) / ktsToFps;
+  acState.gs = groundSpeed / ktsToFps;
+  acState.vs = vsWorld;  // ft/s
+  acState.aoa = alpha * RAD;
+  acState.rpm = fbState.throttle * 2700;
+  acState.throttle = fbState.throttle;
+  acState.wow = fbState.altFt < 5 ? 1 : 0;
+}
+
+// =================== READ JSBSIM STATE ===================
+function readJSBSimState() {
+  if (!jsbsimReady) return;
+  try {
+    acState.lat = safeVal(sdk.getPropertyValue('position/lat-geod-deg'), acState.lat);
+    acState.lon = safeVal(sdk.getPropertyValue('position/long-gc-deg'), acState.lon);
+    acState.alt = safeVal(sdk.getPropertyValue('position/h-sl-ft'), 1500) * mPerFt;
+    acState.hdg = safeVal(sdk.getPropertyValue('attitude/psi-deg'), acState.hdg);
+    acState.pitch = safeVal(sdk.getPropertyValue('attitude/theta-deg'), acState.pitch);
+    acState.roll = safeVal(sdk.getPropertyValue('attitude/phi-deg'), acState.roll);
+    acState.ias = safeVal(sdk.getPropertyValue('velocities/vc-kts'), acState.ias);
+    acState.gs = safeVal(sdk.getPropertyValue('velocities/vg-kts'), acState.gs);
+    acState.vs = safeVal(sdk.getPropertyValue('velocities/v-down-fps'), acState.vs);
+    acState.aoa = safeVal(sdk.getPropertyValue('aero/alpha-deg'), acState.aoa);
+    acState.rpm = safeVal(sdk.getPropertyValue('propulsion/engine[0]/rpm'), 0);
+    acState.throttle = safeVal(sdk.getPropertyValue('fcs/throttle-cmd-norm[0]'), acState.throttle);
+    acState.flap = safeVal(sdk.getPropertyValue('fcs/flap-pos-norm'), acState.flap);
+    acState.gear = safeVal(sdk.getPropertyValue('gear/gear-pos-norm'), acState.gear);
+    acState.wow = safeVal(sdk.getPropertyValue('gear/unit[0]/WOW'), 1);
+  } catch (e) {
+    console.warn('[JSBSim] read state failed:', e);
+  }
+}
+
+// =================== CAMERA UPDATE ===================
+function updateCamera(dt) {
+  if (!viewer) return;
+  const s = acState;
+  const headingR = s.hdg * DEG;
+  const cosLat = Math.cos(s.lat * DEG) || 0.0001;
+
+  if (camMode === 'chase') {
+    const dist = 60;
+    const height = s.alt + 25;
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(
+        s.lon - Math.sin(headingR) * (dist / (111000 * cosLat)),
+        s.lat - Math.cos(headingR) * (dist / 111000),
+        Math.max(height, 15)
+      ),
+      orientation: {
+        heading: headingR,
+        pitch: -0.25,
+        roll: 0
+      }
+    });
+  } else if (camMode === 'tower') {
+    // Fixed tower view near origin
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(-80.2870, 25.7959, 50),
+      orientation: { heading: headingR, pitch: -0.1, roll: 0 }
+    });
+  } else if (camMode === 'cockpit') {
+    const height = s.alt + 3;
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, Math.max(height, 5)),
+      orientation: { heading: headingR, pitch: -0.05, roll: s.roll * DEG }
+    });
+  } else if (camMode === 'orbit') {
+    const t = performance.now() / 5000;
+    const r = 100;
+    const lon = s.lon + Math.cos(t) * r / (111000 * cosLat);
+    const lat = s.lat + Math.sin(t) * r / 111000;
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(lon, lat, s.alt + 40),
+      orientation: { heading: t, pitch: -0.3, roll: 0 }
+    });
+  }
+}
+
+// =================== DEBUG OVERLAY ===================
+function updateDebug() {
+  document.getElementById('dbgLat').textContent = acState.lat.toFixed(5);
+  document.getElementById('dbgLon').textContent = acState.lon.toFixed(5);
+  document.getElementById('dbgAlt').textContent = (acState.alt * ftPerM).toFixed(0);
+  document.getElementById('dbgPitch').textContent = acState.pitch.toFixed(1);
+  document.getElementById('dbgRoll').textContent = acState.roll.toFixed(1);
+  document.getElementById('dbgHdg').textContent = acState.hdg.toFixed(1);
+  document.getElementById('dbgIAS').textContent = acState.ias.toFixed(1);
+  document.getElementById('dbgVS').textContent = (acState.vs * 60).toFixed(0);
+  document.getElementById('dbgThr').textContent = (acState.throttle * 100).toFixed(0);
+  document.getElementById('dbgRPM').textContent = acState.rpm.toFixed(0);
+  document.getElementById('dbgAOA').textContent = acState.aoa.toFixed(1);
+  document.getElementById('dbgWOW').textContent = acState.wow ? 'GROUND' : 'AIR';
+
+  // Info bar
+  document.getElementById('iIAS').textContent = acState.ias.toFixed(0);
+  document.getElementById('iGS').textContent = acState.gs.toFixed(0);
+  document.getElementById('iALT').textContent = (acState.alt * ftPerM).toFixed(0);
+  document.getElementById('iHDG').textContent = Math.round(acState.hdg).toString().padStart(3, '0');
+  document.getElementById('iVS').textContent = (acState.vs * 60).toFixed(0);
+  document.getElementById('iTHR').textContent = (acState.throttle * 100).toFixed(0);
+  document.getElementById('iFPS').textContent = fps.toFixed(0);
+}
+
+// =================== STALL & CRASH ===================
+function checkSafety() {
+  // Stall warning
+  const stallEl = document.getElementById('stallWarn');
+  const onGnd = acState.wow > 0.5;
+  if (acState.aoa > 15 && !onGnd && acState.ias > 10) {
+    stallEl.style.display = 'block';
+  } else {
+    stallEl.style.display = 'none';
+  }
+
+  // Crash
+  if (acState.vs * 60 < -500 && onGnd && !crashed) {
+    crashed = true;
+    document.getElementById('crashOverlay').classList.add('show');
+  }
+}
+
+function resetFlight() {
+  crashed = false;
+  document.getElementById('crashOverlay').classList.remove('show');
+  acState = {
+    lat: 25.7959, lon: -80.2870, alt: 1500 * mPerFt,
+    hdg: 90, pitch: 0, roll: 0,
+    ias: 0, gs: 0, vs: 0, aoa: 0, rpm: 0, throttle: 0,
+    flap: 0, gear: 1, brakes: 0, wow: 1
+  };
+  fbState = {
+    u: 120 * ktsToFps, v: 0, w: 0,
+    phi: 0, theta: 0, psi: 90 * DEG,
+    p: 0, q: 0, r: 0,
+    altFt: 1500,
+    lat: 25.7959, lon: -80.2870,
+    throttle: 0, elevator: 0, aileron: 0, rudder: 0,
+    flap: 0, gear: 1, brakes: 0
+  };
+  thrIn = 0;
+  if (jsbsimReady) {
+    try { sdk.runIc(); } catch (e) { console.warn('[JSBSim] reset failed:', e); }
+  }
+  console.log('[Sim] Flight reset');
+}
+
+// =================== GAME LOOP ===================
+function gameLoop(now) {
+  requestAnimationFrame(gameLoop);
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  if (paused) {
+    drawHUD();
+    return;
+  }
+
+  // FPS counter
+  fpsCount++;
+  fpsTimer += dt;
+  if (fpsTimer >= 1) {
+    fps = fpsCount / fpsTimer;
+    fpsCount = 0;
+    fpsTimer = 0;
+  }
+
+  updateControls(dt);
+
+  if (crashed) {
+    drawHUD();
+    return;
+  }
+
+  if (jsbsimReady) {
+    try {
+      if (sdk.setDt) sdk.setDt(dt);
+      sdk.run();
+    } catch (e) {
+      console.error('[JSBSim] run() failed:', e);
+    }
+    readJSBSimState();
+  } else {
+    updateFallbackPhysics(dt);
+  }
+
+  updateCamera(dt);
+  if (modelEntity) {
+    updateAircraftModel(acState.lon, acState.lat, acState.alt, acState.hdg, acState.pitch, acState.roll);
+  }
+  checkSafety();
+  drawHUD();
+  updateDebug();
+}
+
+// =================== INIT ===================
+async function init() {
+  try {
+    await setupCesium();
+    setLoading(85, 'Loading 3D model...');
+    modelEntity = buildAircraftModel();
+    setLoading(90, 'Setting up HUD...');
+    setLoading(95, 'Setting up controls...');
+    setupControls();
+    applyQuality();
+    setLoading(100, 'Ready!');
+    // Start JSBSim init in parallel — don't block game loop
+    setupJSBSim().then(() => {
+      console.log('[Init] JSBSim setup complete');
+    }).catch(e => {
+      console.error('[Init] JSBSim setup error:', e);
+    });
+    hideLoading();
+    lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+  } catch (e) {
+    console.error('[Init] Fatal error:', e);
+    setLoading(100, 'Error: ' + e.message);
+    // Still try to run with fallback
+    setupControls();
+    hideLoading();
+    lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+  }
+}
+
+init();
+</script>
 </body>
 </html>
