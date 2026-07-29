@@ -252,6 +252,21 @@
     const ftPerM = 3.28084;
     const mPerFt = 0.3048;
 
+    // Debug: log every network request so we can see exactly what triggers Ion 401s.
+    (function patchNetworkLogging() {
+      const origFetch = window.fetch;
+      window.fetch = function(...args) {
+        const url = args[0] && (typeof args[0] === 'string' ? args[0] : args[0].url);
+        if (url && url.includes('ion.cesium.com')) console.warn('[NET fetch]', url, new Error().stack);
+        return origFetch.apply(this, args);
+      };
+      const origXHR = window.XMLHttpRequest.prototype.open;
+      window.XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+        if (url && url.includes('ion.cesium.com')) console.warn('[NET XHR]', method, url, new Error().stack);
+        return origXHR.call(this, method, url, ...rest);
+      };
+    })();
+
     // ---- Aircraft / engine / prop XML strings (official JSBSim C172p) ----
     const C172P_XML = `<?xml version="1.0"?>
 <?xml-stylesheet type="text/xsl" href="http://jsbsim.sourceforge.net/JSBSim.xsl"?>
@@ -1726,11 +1741,10 @@
     // ---- Init ----
     async function init() {
       setLoading(10, 'Initializing CesiumJS...');
-      // Disable the default Ion token so Cesium never makes Ion requests.
-      Cesium.Ion.defaultAccessToken = '';
       setLoading(25, 'Loading satellite imagery...');
       console.log('[Cesium] Creating Viewer with baseLayer:false');
-      viewer = new Cesium.Viewer('cesiumContainer', {
+      try {
+        viewer = new Cesium.Viewer('cesiumContainer', {
         baseLayer: false,
         sceneModePicker: false, baseLayerPicker: false,
         geocoder: false, homeButton: false,
@@ -1740,6 +1754,10 @@
         fullscreenButton: false, vrButton: false,
       });
       console.log('[Cesium] Viewer created');
+      } catch (e) {
+        console.error('[Cesium] Viewer creation failed:', e);
+        throw e;
+      }
 
       try {
         console.log('[Cesium] Removing default imagery layers');
